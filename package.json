@@ -24,5 +24,38 @@
         "react-dom": "^19.2.3",
         "uuid": "^13.0.0",
         "vite": "^7.3.0"
+    },
+    "description": "Güvenli ve Şifreli Yerel Şifre Yöneticisi",
+    "author": "Yigit",
+    "build": {
+        "appId": "com.yigit.sifreyonetici",
+        "productName": "Sifre Yoneticisi",
+        "directories": {
+            "output": "dist-electron"
+        },
+        "files": [
+            "dist/**/*",
+            "dist-electron/**/*",
+            "electron/**/*",
+            "package.json"
+        ],
+        "win": {
+            "target": [
+                {
+                    "target": "nsis",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ],
+            "artifactName": "${productName}-Setup-${version}.${ext}"
+        },
+        "nsis": {
+            "oneClick": false,
+            "perMachine": false,
+            "allowToChangeInstallationDirectory": true,
+            "shortcutName": "Sifre Yoneticisi"
+        },
+        "publish": "never"
     }
 }
