@@ -51,7 +51,7 @@ export function exportToJSON(passwords) {
     return JSON.stringify({
         version: 1,
         exportedAt: new Date().toISOString(),
-        appName: 'SifreYonetici',
+        appName: 'OrendaPass',
         items: cleanData
     }, null, 2);
 }

@@ -1,4 +1,4 @@
-# Güvenli ve Şifreli Yerel Şifre Yöneticisi
+# Orenda Pass - Güvenli ve Şifreli Yerel Kasa
 
 Bu proje, verilerinizin güvenliğini en üst düzeyde tutan, **uçtan uca şifreleme** teknolojisiyle geliştirilmiş modern bir masaüstü uygulamasıdır. Verileriniz asla bir sunucuya gönderilmez; tamamen cihazınızda şifrelenmiş bir şekilde saklanır.
 

@@ -457,7 +457,20 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
             <nav className="sidebar">
                 <div className="sidebar-header">
                     <div className="sidebar-logo">
-                        <ShieldLogo />
+                        <img
+                            src="/icon.png"
+                            alt="Logo"
+                            className="sidebar-app-logo"
+                            onError={(e) => {
+                                e.currentTarget.style.display = 'none';
+                                if (e.currentTarget.nextElementSibling) {
+                                    e.currentTarget.nextElementSibling.style.display = 'block';
+                                }
+                            }}
+                        />
+                        <div className="sidebar-fallback-logo" style={{ display: 'none' }}>
+                            <ShieldLogo />
+                        </div>
                     </div>
                     <h3>{texts.appTitle}</h3>
                 </div>

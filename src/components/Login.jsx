@@ -434,7 +434,22 @@ function Login({ onLogin, texts }) {
                     ) : isRegisterMode ? (
                         <UserPlusIcon />
                     ) : (
-                        <ShieldIcon />
+                        <>
+                            <img
+                                src="/icon.png"
+                                alt="Logo"
+                                className="login-app-logo"
+                                onError={(e) => {
+                                    e.currentTarget.style.display = 'none';
+                                    if (e.currentTarget.nextElementSibling) {
+                                        e.currentTarget.nextElementSibling.style.display = 'block';
+                                    }
+                                }}
+                            />
+                            <div className="login-fallback-shield" style={{ display: 'none' }}>
+                                <ShieldIcon />
+                            </div>
+                        </>
                     )}
                 </div>
 

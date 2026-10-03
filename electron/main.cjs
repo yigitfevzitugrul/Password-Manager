@@ -1,5 +1,6 @@
 const { app, BrowserWindow, ipcMain, Notification } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const https = require('https');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
@@ -21,9 +22,29 @@ let win;
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];
 
+function getAppIcon() {
+  const candidates = [
+    path.join(__dirname, '../Image/icon.ico'),
+    path.join(__dirname, '../Image/icon.png'),
+    path.join(__dirname, '../Image/ikon.jpg'),
+    path.join(process.env.VITE_PUBLIC, 'favicon.ico'),
+    path.join(process.env.VITE_PUBLIC, 'icon.png'),
+    path.join(process.env.VITE_PUBLIC, 'ikon.jpg'),
+  ];
+  for (const c of candidates) {
+    if (fs.existsSync(c)) {
+      return c;
+    }
+  }
+  return undefined;
+}
+
 function createWindow() {
+  const appIcon = getAppIcon();
+
   win = new BrowserWindow({
-    icon: path.join(process.env.VITE_PUBLIC, 'electron-vite.svg'),
+    icon: appIcon,
+    title: 'Orenda Pass',
     width: 1240,
     height: 840,
     minWidth: 900,
@@ -35,6 +56,14 @@ function createWindow() {
     },
     autoHideMenuBar: true,
   });
+
+  if (appIcon) {
+    try {
+      win.setIcon(appIcon);
+    } catch (e) {
+      console.warn('Could not set window icon:', e.message);
+    }
+  }
 
   win.webContents.on('did-finish-load', () => {
     win?.webContents.send('main-process-message', (new Date).toLocaleString());
@@ -160,7 +189,7 @@ app.whenReady().then(() => {
     try {
       if (Notification.isSupported()) {
         const notif = new Notification({
-          title: '🔐 Şifre Yöneticisi — Doğrulama Kodu',
+          title: '🔐 Orenda Pass — Doğrulama Kodu',
           body: `Doğrulama kodunuz: ${code}\nBu kod ${email} adresi için oluşturuldu. (10 dk geçerlidir)`
         });
         notif.show();
@@ -421,7 +450,7 @@ app.whenReady().then(() => {
       const secret = generateSecret(20);
       pending2FASetupSecret = secret;
 
-      const otpauthUrl = `otpauth://totp/SifreYonetici:${encodeURIComponent(accountLabel)}?secret=${secret}&issuer=SifreYonetici&digits=6&period=30`;
+      const otpauthUrl = `otpauth://totp/OrendaPass:${encodeURIComponent(accountLabel)}?secret=${secret}&issuer=OrendaPass&digits=6&period=30`;
       const qrCodeDataUrl = await QRCode.toDataURL(otpauthUrl, {
         width: 200,
         margin: 2,
@@ -547,7 +576,7 @@ app.whenReady().then(() => {
           path: `/range/${prefix}`,
           method: 'GET',
           headers: {
-            'User-Agent': 'SifreYonetici-App/1.0',
+            'User-Agent': 'OrendaPass-App/1.0',
             'Add-Padding': 'true'
           },
           timeout: 6000

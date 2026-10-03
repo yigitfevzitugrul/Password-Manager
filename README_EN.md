@@ -1,4 +1,4 @@
-# Secure & Encrypted Local Password Manager
+# Orenda Pass - Secure & Encrypted Local Password Manager
 
 This project is a modern desktop application built with a focus on maximum security using **end-to-end encryption**. Your data is never sent to any server; it stays strictly on your device, fully encrypted.
 

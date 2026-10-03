@@ -26,11 +26,11 @@
         "uuid": "^13.0.0",
         "vite": "^7.3.0"
     },
-    "description": "Güvenli ve Şifreli Yerel Şifre Yöneticisi",
+    "description": "Orenda Pass - Güvenli ve Şifreli Yerel Kasa",
     "author": "Yigit",
     "build": {
         "appId": "com.yigit.sifreyonetici",
-        "productName": "Sifre Yoneticisi",
+        "productName": "Orenda Pass",
         "directories": {
             "output": "dist-electron"
         },
@@ -38,9 +38,12 @@
             "dist/**/*",
             "dist-electron/**/*",
             "electron/**/*",
+            "Image/**/*",
+            "public/**/*",
             "package.json"
         ],
         "win": {
+            "icon": "Image/icon.ico",
             "target": [
                 {
                     "target": "nsis",
@@ -55,7 +58,7 @@
             "oneClick": false,
             "perMachine": false,
             "allowToChangeInstallationDirectory": true,
-            "shortcutName": "Sifre Yoneticisi"
+            "shortcutName": "Orenda Pass"
         },
         "publish": "never"
     }

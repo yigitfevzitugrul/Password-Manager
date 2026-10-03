@@ -1,6 +1,6 @@
 export const translations = {
     tr: {
-        appTitle: "Şifre Yöneticisi",
+        appTitle: "Orenda Pass",
         login: "Giriş Yap",
         masterPassword: "Ana Şifre",
         navPasswords: "Şifrelerim",
@@ -199,7 +199,7 @@ export const translations = {
         twoFactorDisableConfirm: "2FA'yı kapatmak için ana şifrenizi girin:"
     },
     en: {
-        appTitle: "Password Manager",
+        appTitle: "Orenda Pass",
         login: "Login",
         masterPassword: "Master Password",
         navPasswords: "Passwords",
