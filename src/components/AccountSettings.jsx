@@ -65,7 +65,7 @@ const CopyIcon = () => (
     </svg>
 );
 
-function AccountSettings({ passwords = [], onSave, theme, toggleTheme, lang, setLang, texts }) {
+function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleTheme, lang, setLang, texts }) {
     // Password Change State
     const [oldPassword, setOldPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
@@ -257,6 +257,20 @@ function AccountSettings({ passwords = [], onSave, theme, toggleTheme, lang, set
         <div className="account-settings">
             <h2>{texts.settingsTitle}</h2>
 
+            {currentUser && (
+                <div className="settings-user-card">
+                    <div className="settings-user-avatar">
+                        {currentUser.username ? currentUser.username.charAt(0).toUpperCase() : '👤'}
+                    </div>
+                    <div className="settings-user-details">
+                        <div className="settings-user-title">{currentUser.username}</div>
+                        <div className="settings-user-subtitle">
+                            {texts.currentUserBadge || 'Aktif Hesap'}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* 2FA ACCOUNT SECURITY SECTION */}
             <div className="settings-section">
                 <div className="section-title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -383,22 +397,26 @@ function AccountSettings({ passwords = [], onSave, theme, toggleTheme, lang, set
                 <div className="data-management-grid">
                     {/* Export Card */}
                     <div className="data-card">
-                        <h4>{texts.exportTitle}</h4>
-                        <p>{texts.exportDesc}</p>
+                        <div className="data-card-body">
+                            <h4>{texts.exportTitle}</h4>
+                            <p>{texts.exportDesc}</p>
+                        </div>
                         <div className="data-actions-row">
                             <button
                                 type="button"
-                                className="btn-secondary"
+                                className="btn-data-action btn-data-secondary"
                                 onClick={handleExportJSON}
                                 disabled={passwords.length === 0}
+                                title="JSON"
                             >
                                 <DownloadIcon /> {texts.exportJsonBtn}
                             </button>
                             <button
                                 type="button"
-                                className="btn-secondary"
+                                className="btn-data-action btn-data-secondary"
                                 onClick={handleExportCSV}
                                 disabled={passwords.length === 0}
+                                title="CSV"
                             >
                                 <DownloadIcon /> {texts.exportCsvBtn}
                             </button>
@@ -407,8 +425,10 @@ function AccountSettings({ passwords = [], onSave, theme, toggleTheme, lang, set
 
                     {/* Import Card */}
                     <div className="data-card">
-                        <h4>{texts.importTitle}</h4>
-                        <p>{texts.importDesc}</p>
+                        <div className="data-card-body">
+                            <h4>{texts.importTitle}</h4>
+                            <p>{texts.importDesc}</p>
+                        </div>
                         <div className="data-actions-row">
                             <input
                                 type="file"
@@ -419,9 +439,8 @@ function AccountSettings({ passwords = [], onSave, theme, toggleTheme, lang, set
                             />
                             <button
                                 type="button"
-                                className="btn-primary"
+                                className="btn-data-action btn-data-primary"
                                 onClick={() => fileInputRef.current && fileInputRef.current.click()}
-                                style={{ width: 'auto' }}
                             >
                                 <UploadIcon /> {texts.importSelectBtn}
                             </button>
@@ -451,10 +470,10 @@ function AccountSettings({ passwords = [], onSave, theme, toggleTheme, lang, set
                                 )}
                             </div>
                             <div className="import-preview-actions">
-                                <button className="btn-primary" onClick={handleConfirmImport} style={{ width: 'auto' }}>
+                                <button className="btn-data-action btn-data-primary" onClick={handleConfirmImport}>
                                     {texts.importBtnConfirm}
                                 </button>
-                                <button className="btn-secondary" onClick={() => setImportPreview(null)}>
+                                <button className="btn-data-action btn-data-secondary" onClick={() => setImportPreview(null)}>
                                     {texts.btnCancel}
                                 </button>
                             </div>

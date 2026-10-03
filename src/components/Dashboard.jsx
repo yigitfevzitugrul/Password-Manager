@@ -146,7 +146,7 @@ const CATEGORIES = [
     { key: 'other', icon: '📌', labelKey: 'catOther' }
 ];
 
-const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, texts }) => {
+const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, lang, setLang, texts }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [showModal, setShowModal] = useState(false);
     const [editingItem, setEditingItem] = useState(null);
@@ -545,6 +545,19 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
                 )}
 
                 <div className="sidebar-footer">
+                    <div className="sidebar-user-badge">
+                        <div className="sidebar-user-avatar">
+                            {currentUser?.username ? currentUser.username.charAt(0).toUpperCase() : '👤'}
+                        </div>
+                        <div className="sidebar-user-info">
+                            <span className="sidebar-user-name" title={currentUser?.username}>
+                                {currentUser?.username || texts.accountUsername || 'Kullanıcı'}
+                            </span>
+                            <span className="sidebar-user-sub">
+                                {texts.currentUserBadge || 'Aktif Hesap'}
+                            </span>
+                        </div>
+                    </div>
                     <button className="btn-logout" onClick={onLogout}>
                         <LogOutIcon />
                         {texts.logout}
@@ -725,6 +738,7 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
 
                 {activeTab === 'account' && (
                     <AccountSettings
+                        currentUser={currentUser}
                         passwords={passwords}
                         onSave={onSave}
                         theme={theme}
@@ -737,10 +751,7 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
 
                 {activeTab === 'generator' && (
                     <div className="generator-page">
-                        <h2>{texts.genTitle}</h2>
-                        <div className="generator-page-card">
-                            <PasswordGenerator texts={texts} />
-                        </div>
+                        <PasswordGenerator texts={texts} />
                     </div>
                 )}
             </main>

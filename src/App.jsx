@@ -7,6 +7,7 @@ import { translations } from './translations';
 function App() {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
     const [passwords, setPasswords] = useState([]);
+    const [currentUser, setCurrentUser] = useState(null);
     const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
     const [lang, setLang] = useState(localStorage.getItem('lang') || 'tr');
 
@@ -25,14 +26,16 @@ function App() {
         setTheme(prev => prev === 'dark' ? 'light' : 'dark');
     };
 
-    const handleLogin = (data) => {
-        setPasswords(data);
+    const handleLogin = (data, user) => {
+        setPasswords(data || []);
+        setCurrentUser(user || null);
         setIsAuthenticated(true);
     };
 
     const handleLogout = async () => {
         await window.electronAPI.logout();
         setPasswords([]);
+        setCurrentUser(null);
         setIsAuthenticated(false);
     };
 
@@ -46,6 +49,7 @@ function App() {
             {isAuthenticated ? (
                 <Dashboard
                     data={passwords}
+                    currentUser={currentUser}
                     onLogout={handleLogout}
                     onSave={handleSave}
                     theme={theme}

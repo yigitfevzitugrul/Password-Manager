@@ -1,23 +1,35 @@
 /**
- * 2FA Configuration Manager
- * Handles reading/writing 2FA config and encrypted secret files.
+ * 2FA Configuration Manager (Multi-User Aware)
+ * Handles reading/writing 2FA config and encrypted secret files per user account.
  */
 const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
 
-function get2FAConfigPath() {
-    const userDataPath = app.getPath('userData');
-    return path.join(userDataPath, '2fa_config.json');
+function getUserDataPath() {
+    return app.getPath('userData');
 }
 
-function get2FASecretPath() {
-    const userDataPath = app.getPath('userData');
-    return path.join(userDataPath, '2fa_secret.enc');
+function get2FAConfigPath(userId = 'default') {
+    const userDataPath = getUserDataPath();
+    if (userId === 'default') {
+        const legacyPath = path.join(userDataPath, '2fa_config.json');
+        if (fs.existsSync(legacyPath)) return legacyPath;
+    }
+    return path.join(userDataPath, `2fa_config_${userId}.json`);
 }
 
-function is2FAEnabled() {
-    const configPath = get2FAConfigPath();
+function get2FASecretPath(userId = 'default') {
+    const userDataPath = getUserDataPath();
+    if (userId === 'default') {
+        const legacyPath = path.join(userDataPath, '2fa_secret.enc');
+        if (fs.existsSync(legacyPath)) return legacyPath;
+    }
+    return path.join(userDataPath, `2fa_secret_${userId}.enc`);
+}
+
+function is2FAEnabled(userId = 'default') {
+    const configPath = get2FAConfigPath(userId);
     try {
         if (fs.existsSync(configPath)) {
             const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -29,18 +41,18 @@ function is2FAEnabled() {
     return false;
 }
 
-function save2FAConfig(enabled) {
-    const configPath = get2FAConfigPath();
+function save2FAConfig(userId, enabled) {
+    const configPath = get2FAConfigPath(userId);
     fs.writeFileSync(configPath, JSON.stringify({ enabled }), 'utf8');
 }
 
-function save2FASecret(encryptedBuffer) {
-    const secretPath = get2FASecretPath();
+function save2FASecret(userId, encryptedBuffer) {
+    const secretPath = get2FASecretPath(userId);
     fs.writeFileSync(secretPath, encryptedBuffer);
 }
 
-function read2FASecret() {
-    const secretPath = get2FASecretPath();
+function read2FASecret(userId = 'default') {
+    const secretPath = get2FASecretPath(userId);
     try {
         if (fs.existsSync(secretPath)) {
             return fs.readFileSync(secretPath);
@@ -51,10 +63,10 @@ function read2FASecret() {
     return null;
 }
 
-function remove2FAData() {
+function remove2FAData(userId = 'default') {
     try {
-        const configPath = get2FAConfigPath();
-        const secretPath = get2FASecretPath();
+        const configPath = get2FAConfigPath(userId);
+        const secretPath = get2FASecretPath(userId);
         if (fs.existsSync(configPath)) fs.unlinkSync(configPath);
         if (fs.existsSync(secretPath)) fs.unlinkSync(secretPath);
     } catch (e) {
