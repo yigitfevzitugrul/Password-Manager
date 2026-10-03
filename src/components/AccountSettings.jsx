@@ -1,9 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { exportToCSV, exportToJSON, triggerDownload, parseCSV, parseJSON } from '../utils/csvHelper';
+import { v4 as uuidv4 } from 'uuid';
 
 const LockIcon = () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
         <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+    </svg>
+);
+
+const ShieldIcon = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        <path d="M9 12l2 2 4-4" />
     </svg>
 );
 
@@ -25,7 +34,39 @@ const GlobeIcon = () => (
     </svg>
 );
 
-function AccountSettings({ theme, toggleTheme, lang, setLang, texts }) {
+const DatabaseIcon = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <ellipse cx="12" cy="5" rx="9" ry="3" />
+        <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+    </svg>
+);
+
+const DownloadIcon = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="7 10 12 15 17 10" />
+        <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+);
+
+const UploadIcon = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+        <polyline points="17 8 12 3 7 8" />
+        <line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
+);
+
+const CopyIcon = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+);
+
+function AccountSettings({ passwords = [], onSave, theme, toggleTheme, lang, setLang, texts }) {
+    // Password Change State
     const [oldPassword, setOldPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -33,12 +74,35 @@ function AccountSettings({ theme, toggleTheme, lang, setLang, texts }) {
     const [loading, setLoading] = useState(false);
     const [appVersion, setAppVersion] = useState('');
 
+    // 2FA State
+    const [is2FAActive, setIs2FAActive] = useState(false);
+    const [show2FASetup, setShow2FASetup] = useState(false);
+    const [qrCodeUrl, setQrCodeUrl] = useState('');
+    const [secretKey, setSecretKey] = useState('');
+    const [twoFACode, setTwoFACode] = useState('');
+    const [twoFAStatusMsg, setTwoFAStatusMsg] = useState({ type: '', msg: '' });
+    const [showDisablePrompt, setShowDisablePrompt] = useState(false);
+    const [disablePassword, setDisablePassword] = useState('');
+
+    // Import State
+    const fileInputRef = useRef(null);
+    const [importPreview, setImportPreview] = useState(null);
+    const [importMsg, setImportMsg] = useState({ type: '', msg: '' });
+
     useEffect(() => {
-        if (window.electronAPI && window.electronAPI.getAppVersion) {
-            window.electronAPI.getAppVersion().then(v => setAppVersion(v)).catch(() => {});
+        if (window.electronAPI) {
+            if (window.electronAPI.getAppVersion) {
+                window.electronAPI.getAppVersion().then(v => setAppVersion(v)).catch(() => {});
+            }
+            if (window.electronAPI.get2FAStatus) {
+                window.electronAPI.get2FAStatus().then(res => {
+                    setIs2FAActive(res.enabled);
+                }).catch(() => {});
+            }
         }
     }, []);
 
+    // Change Master Password
     const handleChangePassword = async (e) => {
         e.preventDefault();
         if (newPassword !== confirmPassword) {
@@ -70,10 +134,336 @@ function AccountSettings({ theme, toggleTheme, lang, setLang, texts }) {
         }
     };
 
+    // 2FA: Start Setup
+    const handleStart2FASetup = async () => {
+        setTwoFAStatusMsg({ type: '', msg: '' });
+        setTwoFACode('');
+        try {
+            const res = await window.electronAPI.setup2FA();
+            if (res.success) {
+                setQrCodeUrl(res.qrCodeDataUrl);
+                setSecretKey(res.secret);
+                setShow2FASetup(true);
+            } else {
+                setTwoFAStatusMsg({ type: 'error', msg: res.error });
+            }
+        } catch (err) {
+            setTwoFAStatusMsg({ type: 'error', msg: err.message });
+        }
+    };
+
+    // 2FA: Enable
+    const handleConfirm2FA = async (e) => {
+        e.preventDefault();
+        if (!twoFACode || twoFACode.length < 6) return;
+
+        try {
+            const res = await window.electronAPI.enable2FA(twoFACode);
+            if (res.success) {
+                setIs2FAActive(true);
+                setShow2FASetup(false);
+                setTwoFAStatusMsg({ type: 'success', msg: texts.twoFactorSuccess });
+            } else {
+                setTwoFAStatusMsg({ type: 'error', msg: res.error });
+            }
+        } catch (err) {
+            setTwoFAStatusMsg({ type: 'error', msg: err.message });
+        }
+    };
+
+    // 2FA: Disable
+    const handleDisable2FA = async (e) => {
+        e.preventDefault();
+        try {
+            const res = await window.electronAPI.disable2FA(disablePassword);
+            if (res.success) {
+                setIs2FAActive(false);
+                setShowDisablePrompt(false);
+                setDisablePassword('');
+                setTwoFAStatusMsg({ type: 'success', msg: texts.twoFactorDisabledSuccess });
+            } else {
+                setTwoFAStatusMsg({ type: 'error', msg: res.error });
+            }
+        } catch (err) {
+            setTwoFAStatusMsg({ type: 'error', msg: err.message });
+        }
+    };
+
+    // Option 9: Export Handlers
+    const handleExportJSON = () => {
+        const json = exportToJSON(passwords);
+        const dateStr = new Date().toISOString().slice(0, 10);
+        triggerDownload(json, `sifre-kasa-${dateStr}.json`, 'application/json');
+    };
+
+    const handleExportCSV = () => {
+        const csv = exportToCSV(passwords);
+        const dateStr = new Date().toISOString().slice(0, 10);
+        triggerDownload(csv, `sifre-kasa-${dateStr}.csv`, 'text/csv;charset=utf-8');
+    };
+
+    // Option 9: Import Handlers
+    const handleFileSelected = (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+
+        setImportMsg({ type: '', msg: '' });
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const content = event.target.result;
+            let parsedItems = [];
+
+            if (file.name.endsWith('.json')) {
+                parsedItems = parseJSON(content);
+            } else {
+                parsedItems = parseCSV(content);
+            }
+
+            if (parsedItems.length === 0) {
+                setImportMsg({ type: 'error', msg: texts.importInvalidFile });
+                return;
+            }
+
+            setImportPreview(parsedItems);
+        };
+        reader.readAsText(file);
+        // Reset input value so same file can be selected again
+        e.target.value = '';
+    };
+
+    const handleConfirmImport = () => {
+        if (!importPreview || importPreview.length === 0) return;
+
+        const newItems = importPreview.map(item => ({
+            ...item,
+            id: uuidv4(),
+            createdAt: Date.now(),
+            updatedAt: Date.now()
+        }));
+
+        const merged = [...passwords, ...newItems];
+        if (onSave) {
+            onSave(merged);
+        }
+
+        setImportMsg({
+            type: 'success',
+            msg: `${newItems.length} ${texts.importSuccess}`
+        });
+        setImportPreview(null);
+    };
+
     return (
         <div className="account-settings">
             <h2>{texts.settingsTitle}</h2>
 
+            {/* 2FA ACCOUNT SECURITY SECTION */}
+            <div className="settings-section">
+                <div className="section-title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3><ShieldIcon /> {texts.twoFactorTitle}</h3>
+                    <span className={`badge ${is2FAActive ? 'badge-success' : 'badge-muted'}`}>
+                        {is2FAActive ? texts.twoFactorEnabledBadge : texts.twoFactorDisabledBadge}
+                    </span>
+                </div>
+                <p className="section-subtitle">{texts.twoFactorDesc}</p>
+
+                {twoFAStatusMsg.msg && (
+                    <div className={`status-message ${twoFAStatusMsg.type}`}>
+                        {twoFAStatusMsg.msg}
+                    </div>
+                )}
+
+                {!is2FAActive ? (
+                    <div>
+                        {!show2FASetup ? (
+                            <button className="btn-primary" onClick={handleStart2FASetup} style={{ width: 'auto', marginTop: '0.5rem' }}>
+                                <ShieldIcon /> {texts.twoFactorEnableBtn}
+                            </button>
+                        ) : (
+                            <div className="twofa-setup-box">
+                                <p className="twofa-instruction">{texts.twoFactorScanQR}</p>
+                                <div className="twofa-qr-container">
+                                    {qrCodeUrl && <img src={qrCodeUrl} alt="2FA QR Code" className="twofa-qr-image" />}
+                                </div>
+                                <div className="twofa-manual-key">
+                                    <span>{texts.twoFactorManualKey}</span>
+                                    <code>{secretKey}</code>
+                                    <button
+                                        type="button"
+                                        className="btn-icon"
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(secretKey);
+                                        }}
+                                        title={texts.genCopy}
+                                    >
+                                        <CopyIcon />
+                                    </button>
+                                </div>
+
+                                <form onSubmit={handleConfirm2FA} className="twofa-verify-form">
+                                    <label className="input-label">{texts.twoFactorEnterCode}</label>
+                                    <div className="input-with-action">
+                                        <input
+                                            type="text"
+                                            maxLength="6"
+                                            placeholder="123456"
+                                            value={twoFACode}
+                                            onChange={e => setTwoFACode(e.target.value.replace(/[^0-9]/g, ''))}
+                                            className="twofa-code-input"
+                                            autoFocus
+                                            required
+                                        />
+                                        <button type="submit" className="btn-primary" style={{ width: 'auto' }}>
+                                            {texts.twoFactorConfirmBtn}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="btn-secondary"
+                                            onClick={() => setShow2FASetup(false)}
+                                        >
+                                            {texts.btnCancel}
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <div>
+                        {!showDisablePrompt ? (
+                            <button
+                                className="btn-danger"
+                                onClick={() => setShowDisablePrompt(true)}
+                                style={{ width: 'auto', marginTop: '0.5rem' }}
+                            >
+                                {texts.twoFactorDisableBtn}
+                            </button>
+                        ) : (
+                            <form onSubmit={handleDisable2FA} className="disable-2fa-form">
+                                <label className="input-label">{texts.twoFactorDisableConfirm}</label>
+                                <div className="input-with-action">
+                                    <input
+                                        type="password"
+                                        placeholder={texts.masterPassword}
+                                        value={disablePassword}
+                                        onChange={e => setDisablePassword(e.target.value)}
+                                        required
+                                    />
+                                    <button type="submit" className="btn-danger" style={{ width: 'auto' }}>
+                                        {texts.twoFactorDisableBtn}
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="btn-secondary"
+                                        onClick={() => {
+                                            setShowDisablePrompt(false);
+                                            setDisablePassword('');
+                                        }}
+                                    >
+                                        {texts.btnCancel}
+                                    </button>
+                                </div>
+                            </form>
+                        )}
+                    </div>
+                )}
+            </div>
+
+            {/* OPTION 9: DATA MANAGEMENT & BACKUP SECTION (IMPORT / EXPORT) */}
+            <div className="settings-section">
+                <h3><DatabaseIcon /> {texts.dataManagement}</h3>
+                <p className="warning-text">{texts.exportWarning}</p>
+
+                {importMsg.msg && (
+                    <div className={`status-message ${importMsg.type}`}>
+                        {importMsg.msg}
+                    </div>
+                )}
+
+                <div className="data-management-grid">
+                    {/* Export Card */}
+                    <div className="data-card">
+                        <h4>{texts.exportTitle}</h4>
+                        <p>{texts.exportDesc}</p>
+                        <div className="data-actions-row">
+                            <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={handleExportJSON}
+                                disabled={passwords.length === 0}
+                            >
+                                <DownloadIcon /> {texts.exportJsonBtn}
+                            </button>
+                            <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={handleExportCSV}
+                                disabled={passwords.length === 0}
+                            >
+                                <DownloadIcon /> {texts.exportCsvBtn}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Import Card */}
+                    <div className="data-card">
+                        <h4>{texts.importTitle}</h4>
+                        <p>{texts.importDesc}</p>
+                        <div className="data-actions-row">
+                            <input
+                                type="file"
+                                ref={fileInputRef}
+                                onChange={handleFileSelected}
+                                accept=".json,.csv"
+                                style={{ display: 'none' }}
+                            />
+                            <button
+                                type="button"
+                                className="btn-primary"
+                                onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                                style={{ width: 'auto' }}
+                            >
+                                <UploadIcon /> {texts.importSelectBtn}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Import Preview Confirmation Dialog */}
+                {importPreview && (
+                    <div className="import-preview-modal">
+                        <div className="import-preview-card">
+                            <h4>{texts.importConfirmTitle}</h4>
+                            <p>
+                                <strong>{importPreview.length}</strong> {texts.importConfirmMsg}
+                            </p>
+                            <div className="import-items-preview">
+                                {importPreview.slice(0, 5).map((item, idx) => (
+                                    <div key={idx} className="import-preview-row">
+                                        <span>• {item.title || 'İsimsiz'}</span>
+                                        <span className="sub">{item.username || '-'}</span>
+                                    </div>
+                                ))}
+                                {importPreview.length > 5 && (
+                                    <div className="import-preview-more">
+                                        + {importPreview.length - 5} kayıt daha...
+                                    </div>
+                                )}
+                            </div>
+                            <div className="import-preview-actions">
+                                <button className="btn-primary" onClick={handleConfirmImport} style={{ width: 'auto' }}>
+                                    {texts.importBtnConfirm}
+                                </button>
+                                <button className="btn-secondary" onClick={() => setImportPreview(null)}>
+                                    {texts.btnCancel}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* CHANGE MASTER PASSWORD */}
             <div className="settings-section">
                 <h3><LockIcon /> {texts.settingsChangeMaster}</h3>
                 <p className="warning-text">{texts.settingsWarning}</p>
@@ -113,12 +503,13 @@ function AccountSettings({ theme, toggleTheme, lang, setLang, texts }) {
                         </div>
                     )}
 
-                    <button type="submit" className="btn-primary" disabled={loading} style={{ marginTop: '0.75rem' }}>
+                    <button type="submit" className="btn-primary" disabled={loading} style={{ marginTop: '0.75rem', width: 'auto' }}>
                         {loading ? texts.updating : texts.btnUpdatePass}
                     </button>
                 </form>
             </div>
 
+            {/* APPEARANCE */}
             <div className="settings-section">
                 <h3><PaletteIcon /> {texts.settingsAppearance}</h3>
                 <div className="settings-row">
@@ -134,6 +525,7 @@ function AccountSettings({ theme, toggleTheme, lang, setLang, texts }) {
                 </div>
             </div>
 
+            {/* LANGUAGE */}
             <div className="settings-section">
                 <h3><GlobeIcon /> {texts.settingsLanguage}</h3>
                 <div className="lang-btn-group">

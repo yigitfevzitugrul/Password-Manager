@@ -1,8 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import Modal from './Modal';
 import PasswordGenerator from './PasswordGenerator';
 import AccountSettings from './AccountSettings';
+import VaultStats from './VaultStats';
+import TotpDisplay from './TotpDisplay';
+import { isValidBase32 } from '../utils/totp';
+import { calculatePasswordStrength } from '../utils/passwordStrength';
 
 // --- SVG Icons ---
 const KeyIcon = () => (
@@ -24,6 +28,12 @@ const SettingsIcon = () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="12" cy="12" r="3" />
         <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+);
+const StatsIcon = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        <path d="M9 12l2 2 4-4" />
     </svg>
 );
 const LogOutIcon = () => (
@@ -83,7 +93,6 @@ const VaultIcon = () => (
         <line x1="17" y1="12" x2="15" y2="12" />
     </svg>
 );
-
 const EyeIcon = () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
@@ -103,38 +112,228 @@ const ExternalLinkIcon = () => (
         <line x1="10" y1="14" x2="21" y2="3" />
     </svg>
 );
+const StarIcon = ({ filled = false }) => (
+    <svg viewBox="0 0 24 24" fill={filled ? '#f59e0b' : 'none'} stroke={filled ? '#f59e0b' : 'currentColor'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+    </svg>
+);
+const GripIcon = () => (
+    <svg viewBox="0 0 24 24" fill="currentColor">
+        <circle cx="9" cy="6" r="1.5" />
+        <circle cx="15" cy="6" r="1.5" />
+        <circle cx="9" cy="12" r="1.5" />
+        <circle cx="15" cy="12" r="1.5" />
+        <circle cx="9" cy="18" r="1.5" />
+        <circle cx="15" cy="18" r="1.5" />
+    </svg>
+);
+const ShieldAlertIcon = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        <line x1="12" y1="8" x2="12" y2="12" />
+        <line x1="12" y1="16" x2="12.01" y2="16" />
+    </svg>
+);
+
+// Categories definitions
+const CATEGORIES = [
+    { key: 'all', icon: '📁', labelKey: 'catAll' },
+    { key: 'social', icon: '🌐', labelKey: 'catSocial' },
+    { key: 'finance', icon: '💳', labelKey: 'catFinance' },
+    { key: 'email', icon: '✉️', labelKey: 'catEmail' },
+    { key: 'work', icon: '💼', labelKey: 'catWork' },
+    { key: 'shopping', icon: '🛍️', labelKey: 'catShopping' },
+    { key: 'other', icon: '📌', labelKey: 'catOther' }
+];
 
 const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, texts }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [showModal, setShowModal] = useState(false);
     const [editingItem, setEditingItem] = useState(null);
-    const [activeTab, setActiveTab] = useState('passwords');
+    const [activeTab, setActiveTab] = useState('passwords'); // 'passwords', 'generator', 'stats', 'account'
     const [deleteItem, setDeleteItem] = useState(null);
     const [isViewMode, setIsViewMode] = useState(false);
     const [toast, setToast] = useState({ show: false, message: '' });
     const [showPasswordField, setShowPasswordField] = useState(false);
 
-    // Form State
-    const [formData, setFormData] = useState({ title: '', username: '', password: '', url: '', notes: '' });
+    // Option 5: Category Filter
+    const [selectedCategory, setSelectedCategory] = useState('all');
+
+    // Option 6: Favorites Filter
+    const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
+
+    // Option 7: Sorting
+    const [sortMode, setSortMode] = useState(() => localStorage.getItem('sort_preference') || 'custom');
+
+    // Quick filter from Stats tab (e.g. 'weak', 'reused')
+    const [quickFilter, setQuickFilter] = useState(null);
+
+    // Option 15: Drag & Drop State
+    const [draggedItemIndex, setDraggedItemIndex] = useState(null);
+    const [dragOverIndex, setDragOverIndex] = useState(null);
+
+    // Option 18: Single Item HIBP Breach Check
+    const [breachResult, setBreachResult] = useState(null);
+    const [isCheckingBreach, setIsCheckingBreach] = useState(false);
+
+    // Form State (with Category and Favorite)
+    const [formData, setFormData] = useState({
+        title: '',
+        username: '',
+        password: '',
+        url: '',
+        category: 'other',
+        notes: '',
+        totpSecret: '',
+        isFavorite: false
+    });
 
     const passwords = data || [];
 
-    const filtered = passwords.filter(p => {
-        const term = searchTerm.toLowerCase();
-        return (p.title || '').toLowerCase().includes(term) ||
-               (p.username || '').toLowerCase().includes(term) ||
-               (p.url || '').toLowerCase().includes(term) ||
-               (p.notes || '').toLowerCase().includes(term);
-    });
+    // Save sort preference
+    const handleSortChange = (newSort) => {
+        setSortMode(newSort);
+        localStorage.setItem('sort_preference', newSort);
+    };
 
     const showToast = (message) => {
         setToast({ show: true, message });
         setTimeout(() => setToast({ show: false, message: '' }), 2200);
     };
 
+    // Option 6: Instant Favorite Toggle
+    const handleToggleFavorite = (e, item) => {
+        e.stopPropagation();
+        const updated = passwords.map(p =>
+            p.id === item.id ? { ...p, isFavorite: !p.isFavorite } : p
+        );
+        onSave(updated);
+        showToast(!item.isFavorite ? texts.favAdded : texts.favRemoved);
+    };
+
+    // Calculate duplicate passwords for 'reused' quick filter
+    const reusedPasswordSet = React.useMemo(() => {
+        const counts = {};
+        passwords.forEach(p => {
+            if (p.password) {
+                counts[p.password] = (counts[p.password] || 0) + 1;
+            }
+        });
+        const duplicates = new Set();
+        Object.entries(counts).forEach(([pw, c]) => {
+            if (c > 1) duplicates.add(pw);
+        });
+        return duplicates;
+    }, [passwords]);
+
+    // Filter Passwords
+    const filtered = React.useMemo(() => {
+        return passwords.filter(p => {
+            const term = searchTerm.toLowerCase();
+            const matchesSearch =
+                (p.title || '').toLowerCase().includes(term) ||
+                (p.username || '').toLowerCase().includes(term) ||
+                (p.url || '').toLowerCase().includes(term) ||
+                (p.notes || '').toLowerCase().includes(term);
+
+            if (!matchesSearch) return false;
+
+            // Category filter
+            if (selectedCategory !== 'all') {
+                const itemCat = p.category || 'other';
+                if (itemCat !== selectedCategory) return false;
+            }
+
+            // Favorites filter
+            if (showOnlyFavorites && !p.isFavorite) return false;
+
+            // Quick filters from Stats
+            if (quickFilter === 'weak') {
+                const str = calculatePasswordStrength(p.password);
+                if (str.level !== 'weak') return false;
+            } else if (quickFilter === 'reused') {
+                if (!p.password || !reusedPasswordSet.has(p.password)) return false;
+            }
+
+            return true;
+        });
+    }, [passwords, searchTerm, selectedCategory, showOnlyFavorites, quickFilter, reusedPasswordSet]);
+
+    // Sort Filtered Passwords
+    const sortedPasswords = React.useMemo(() => {
+        const list = [...filtered];
+
+        if (sortMode === 'az') {
+            list.sort((a, b) => (a.title || '').localeCompare(b.title || '', lang));
+        } else if (sortMode === 'za') {
+            list.sort((a, b) => (b.title || '').localeCompare(a.title || '', lang));
+        } else if (sortMode === 'newest') {
+            list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        } else if (sortMode === 'oldest') {
+            list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+        } else if (sortMode === 'strength-desc') {
+            list.sort((a, b) => {
+                const sa = calculatePasswordStrength(a.password).score;
+                const sb = calculatePasswordStrength(b.password).score;
+                return sb - sa;
+            });
+        } else if (sortMode === 'strength-asc') {
+            list.sort((a, b) => {
+                const sa = calculatePasswordStrength(a.password).score;
+                const sb = calculatePasswordStrength(b.password).score;
+                return sa - sb;
+            });
+        }
+        return list;
+    }, [filtered, sortMode, lang]);
+
+    // Option 15: Drag & Drop handlers
+    const isDragEnabled = sortMode === 'custom' && selectedCategory === 'all' && !showOnlyFavorites && !searchTerm && !quickFilter;
+
+    const handleDragStart = (e, index) => {
+        if (!isDragEnabled) return;
+        setDraggedItemIndex(index);
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', index);
+    };
+
+    const handleDragOver = (e, index) => {
+        if (!isDragEnabled) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        if (dragOverIndex !== index) {
+            setDragOverIndex(index);
+        }
+    };
+
+    const handleDrop = (e, targetIndex) => {
+        if (!isDragEnabled) return;
+        e.preventDefault();
+        if (draggedItemIndex === null || draggedItemIndex === targetIndex) {
+            setDraggedItemIndex(null);
+            setDragOverIndex(null);
+            return;
+        }
+
+        const newOrder = [...passwords];
+        const [movedItem] = newOrder.splice(draggedItemIndex, 1);
+        newOrder.splice(targetIndex, 0, movedItem);
+
+        onSave(newOrder);
+        setDraggedItemIndex(null);
+        setDragOverIndex(null);
+        showToast('Sıralama güncellendi.');
+    };
+
+    const handleDragEnd = () => {
+        setDraggedItemIndex(null);
+        setDragOverIndex(null);
+    };
+
     const openModal = (item = null, viewMode = false) => {
         setIsViewMode(viewMode);
         setShowPasswordField(false);
+        setBreachResult(null);
         if (item) {
             setEditingItem(item);
             setFormData({
@@ -142,11 +341,23 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
                 username: item.username || '',
                 password: item.password || '',
                 url: item.url || '',
-                notes: item.notes || ''
+                category: item.category || 'other',
+                notes: item.notes || '',
+                totpSecret: item.totpSecret || '',
+                isFavorite: !!item.isFavorite
             });
         } else {
             setEditingItem(null);
-            setFormData({ title: '', username: '', password: '', url: '', notes: '' });
+            setFormData({
+                title: '',
+                username: '',
+                password: '',
+                url: '',
+                category: selectedCategory !== 'all' ? selectedCategory : 'other',
+                notes: '',
+                totpSecret: '',
+                isFavorite: false
+            });
         }
         setShowModal(true);
     };
@@ -157,6 +368,7 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
         setDeleteItem(null);
         setIsViewMode(false);
         setShowPasswordField(false);
+        setBreachResult(null);
     };
 
     const handleSaveEntry = (e) => {
@@ -164,10 +376,15 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
         if (isViewMode) return;
 
         let newData;
+        const now = Date.now();
         if (editingItem) {
-            newData = passwords.map(p => p.id === editingItem.id ? { ...formData, id: editingItem.id } : p);
+            newData = passwords.map(p =>
+                p.id === editingItem.id
+                    ? { ...formData, id: editingItem.id, createdAt: editingItem.createdAt || now, updatedAt: now }
+                    : p
+            );
         } else {
-            newData = [...passwords, { ...formData, id: uuidv4() }];
+            newData = [...passwords, { ...formData, id: uuidv4(), createdAt: now, updatedAt: now }];
         }
         onSave(newData);
         showToast(texts.savedSuccess || 'Şifre başarıyla kaydedildi.');
@@ -202,10 +419,36 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
         window.open(target, '_blank');
     };
 
+    // Option 18: Check HIBP for the currently opened password in modal
+    const handleCheckCurrentBreach = async () => {
+        if (!formData.password) return;
+        setIsCheckingBreach(true);
+        setBreachResult(null);
+        try {
+            if (window.electronAPI && window.electronAPI.checkPwnedPassword) {
+                const res = await window.electronAPI.checkPwnedPassword(formData.password);
+                setBreachResult(res);
+            }
+        } catch (e) {
+            console.error(e);
+            setBreachResult({ error: e.message });
+        } finally {
+            setIsCheckingBreach(false);
+        }
+    };
+
     const getInitials = (title) => {
         if (!title) return '?';
         return title.charAt(0).toUpperCase();
     };
+
+    // Get count for a category
+    const getCategoryCount = (catKey) => {
+        if (catKey === 'all') return passwords.length;
+        return passwords.filter(p => (p.category || 'other') === catKey).length;
+    };
+
+    const favoritesCount = passwords.filter(p => p.isFavorite).length;
 
     if (!texts) return null;
 
@@ -221,12 +464,41 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
 
                 <div className="sidebar-menu">
                     <button
-                        className={`menu-item ${activeTab === 'passwords' ? 'active' : ''}`}
-                        onClick={() => setActiveTab('passwords')}
+                        className={`menu-item ${activeTab === 'passwords' && !showOnlyFavorites ? 'active' : ''}`}
+                        onClick={() => {
+                            setActiveTab('passwords');
+                            setShowOnlyFavorites(false);
+                            setQuickFilter(null);
+                        }}
                     >
                         <KeyIcon />
                         {texts.navPasswords}
+                        <span className="menu-badge">{passwords.length}</span>
                     </button>
+
+                    {/* Option 6: Favorites Sidebar Link */}
+                    <button
+                        className={`menu-item ${activeTab === 'passwords' && showOnlyFavorites ? 'active' : ''}`}
+                        onClick={() => {
+                            setActiveTab('passwords');
+                            setShowOnlyFavorites(true);
+                            setQuickFilter(null);
+                        }}
+                    >
+                        <StarIcon filled={showOnlyFavorites} />
+                        {texts.navFavorites}
+                        <span className="menu-badge">{favoritesCount}</span>
+                    </button>
+
+                    {/* Option 13: Vault Stats Sidebar Link */}
+                    <button
+                        className={`menu-item ${activeTab === 'stats' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('stats')}
+                    >
+                        <StatsIcon />
+                        {texts.navStats}
+                    </button>
+
                     <button
                         className={`menu-item ${activeTab === 'generator' ? 'active' : ''}`}
                         onClick={() => setActiveTab('generator')}
@@ -234,6 +506,7 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
                         <DiceIcon />
                         {texts.navGenerator}
                     </button>
+
                     <button
                         className={`menu-item ${activeTab === 'account' ? 'active' : ''}`}
                         onClick={() => setActiveTab('account')}
@@ -242,6 +515,34 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
                         {texts.navSettings}
                     </button>
                 </div>
+
+                {/* Option 5: Categories List in Sidebar */}
+                {activeTab === 'passwords' && (
+                    <div className="sidebar-categories">
+                        <div className="sidebar-section-title">{texts.labelCategory}</div>
+                        <div className="category-list">
+                            {CATEGORIES.map(cat => {
+                                const count = getCategoryCount(cat.key);
+                                const isSelected = selectedCategory === cat.key && !showOnlyFavorites;
+                                return (
+                                    <button
+                                        key={cat.key}
+                                        className={`category-item ${isSelected ? 'active' : ''}`}
+                                        onClick={() => {
+                                            setSelectedCategory(cat.key);
+                                            setShowOnlyFavorites(false);
+                                            setQuickFilter(null);
+                                        }}
+                                    >
+                                        <span className="category-icon">{cat.icon}</span>
+                                        <span className="category-name">{texts[cat.labelKey] || cat.key}</span>
+                                        <span className="category-count">{count}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                )}
 
                 <div className="sidebar-footer">
                     <button className="btn-logout" onClick={onLogout}>
@@ -265,53 +566,167 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
                                     className="search-input-clean"
                                 />
                             </div>
-                            <button className="btn-primary" onClick={() => openModal()}>
+
+                            {/* Option 7: Sorting Selector */}
+                            <div className="sort-selector-wrapper">
+                                <label className="sort-label">{texts.sortLabel}:</label>
+                                <select
+                                    className="sort-select"
+                                    value={sortMode}
+                                    onChange={(e) => handleSortChange(e.target.value)}
+                                >
+                                    <option value="custom">{texts.sortCustom}</option>
+                                    <option value="az">{texts.sortAZ}</option>
+                                    <option value="za">{texts.sortZA}</option>
+                                    <option value="newest">{texts.sortNewest}</option>
+                                    <option value="oldest">{texts.sortOldest}</option>
+                                    <option value="strength-desc">{texts.sortStrengthDesc}</option>
+                                    <option value="strength-asc">{texts.sortStrengthAsc}</option>
+                                </select>
+                            </div>
+
+                            <button className="btn-primary" onClick={() => openModal()} style={{ width: 'auto' }}>
                                 <PlusIcon />
                                 {texts.addNew}
                             </button>
                         </header>
 
+                        {/* Quick Filter Alert Banner */}
+                        {quickFilter && (
+                            <div className="filter-alert-banner">
+                                <span>
+                                    {quickFilter === 'weak' ? 'Filtre: Yalnızca Zayıf Şifreler' : 'Filtre: Yalnızca Tekrar Eden Şifreler'}
+                                </span>
+                                <button className="btn-ghost" onClick={() => setQuickFilter(null)} style={{ padding: '2px 8px', fontSize: '0.78rem' }}>
+                                    ✕ Filtreyi Temizle
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Option 15: Drag hint banner */}
+                        {isDragEnabled && sortedPasswords.length > 1 && (
+                            <div className="drag-hint-banner">
+                                <GripIcon />
+                                <span>{texts.dragHint}</span>
+                            </div>
+                        )}
+
                         <div className="password-list">
-                            {filtered.length === 0 ? (
+                            {sortedPasswords.length === 0 ? (
                                 <div className="empty-state">
                                     <VaultIcon />
                                     <p>{texts.noPasswords}</p>
                                 </div>
                             ) : (
-                                filtered.map(item => (
-                                    <div key={item.id} className="password-item">
+                                sortedPasswords.map((item, index) => {
+                                    const strength = calculatePasswordStrength(item.password);
+                                    const isDraggingThis = draggedItemIndex === index;
+                                    const isDragOverThis = dragOverIndex === index;
+
+                                    return (
                                         <div
-                                            className="clickable-area"
-                                            onClick={(e) => { e.stopPropagation(); openModal(item, true); }}
-                                            title={texts.modalDetail}
+                                            key={item.id}
+                                            className={`password-item ${isDraggingThis ? 'is-dragging' : ''} ${isDragOverThis ? 'is-drag-over' : ''}`}
+                                            draggable={isDragEnabled}
+                                            onDragStart={(e) => handleDragStart(e, index)}
+                                            onDragOver={(e) => handleDragOver(e, index)}
+                                            onDrop={(e) => handleDrop(e, index)}
+                                            onDragEnd={handleDragEnd}
                                         >
-                                            <div className="item-avatar">
-                                                {getInitials(item.title)}
+                                            {/* Drag Handle */}
+                                            {isDragEnabled && (
+                                                <div className="drag-handle" title={texts.dragHint}>
+                                                    <GripIcon />
+                                                </div>
+                                            )}
+
+                                            <div
+                                                className="clickable-area"
+                                                onClick={(e) => { e.stopPropagation(); openModal(item, true); }}
+                                                title={texts.modalDetail}
+                                            >
+                                                <div className="item-avatar">
+                                                    {getInitials(item.title)}
+                                                </div>
+                                                <div className="item-info">
+                                                    <div className="item-title-row">
+                                                        <h4>{item.title}</h4>
+
+                                                        {/* Option 5: Category Badge */}
+                                                        {item.category && item.category !== 'other' && (
+                                                            <span className="category-pill">
+                                                                {CATEGORIES.find(c => c.key === item.category)?.icon}{' '}
+                                                                {texts[CATEGORIES.find(c => c.key === item.category)?.labelKey] || item.category}
+                                                            </span>
+                                                        )}
+
+                                                        {/* Option 12: Password Strength Badge */}
+                                                        <span
+                                                            className={`strength-pill strength-${strength.level}`}
+                                                            style={{
+                                                                backgroundColor: `${strength.color}15`,
+                                                                color: strength.color,
+                                                                borderColor: `${strength.color}40`
+                                                            }}
+                                                            title={`Güvenlik Skoru: ${strength.score}/100`}
+                                                        >
+                                                            <span className="strength-dot" style={{ backgroundColor: strength.color }} />
+                                                            {lang === 'tr' ? strength.labelTr : strength.labelEn}
+                                                        </span>
+
+                                                        {/* 2FA Badge */}
+                                                        {item.totpSecret && isValidBase32(item.totpSecret) && (
+                                                            <span className="totp-badge">{texts.totpBadge}</span>
+                                                        )}
+                                                    </div>
+                                                    <span>{item.username || '-'}</span>
+                                                </div>
                                             </div>
-                                            <div className="item-info">
-                                                <h4>{item.title}</h4>
-                                                <span>{item.username}</span>
+
+                                            <div className="item-actions">
+                                                {/* Option 6: Star Icon Favorite Toggle */}
+                                                <button
+                                                    className={`btn-icon star-btn ${item.isFavorite ? 'is-fav' : ''}`}
+                                                    onClick={(e) => handleToggleFavorite(e, item)}
+                                                    title={item.isFavorite ? texts.favRemoved : texts.favAdded}
+                                                >
+                                                    <StarIcon filled={item.isFavorite} />
+                                                </button>
+
+                                                <button className="btn-icon" onClick={(e) => { e.stopPropagation(); copyToClipboard(item.password, texts.copiedPassword); }} title={texts.genCopy}>
+                                                    <CopyIcon />
+                                                </button>
+                                                <button className="btn-icon" onClick={(e) => { e.stopPropagation(); openModal(item); }} title={texts.modalEdit}>
+                                                    <EditIcon />
+                                                </button>
+                                                <button className="btn-icon-danger" onClick={(e) => { e.stopPropagation(); confirmDelete(item); }} title={texts.btnDelete}>
+                                                    <TrashIcon />
+                                                </button>
                                             </div>
                                         </div>
-                                        <div className="item-actions">
-                                            <button className="btn-icon" onClick={(e) => { e.stopPropagation(); copyToClipboard(item.password, texts.copiedPassword); }} title={texts.genCopy}>
-                                                <CopyIcon />
-                                            </button>
-                                            <button className="btn-icon" onClick={(e) => { e.stopPropagation(); openModal(item); }} title={texts.modalEdit}>
-                                                <EditIcon />
-                                            </button>
-                                            <button className="btn-icon-danger" onClick={(e) => { e.stopPropagation(); confirmDelete(item); }} title={texts.btnDelete}>
-                                                <TrashIcon />
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))
+                                    );
+                                })
                             )}
                         </div>
                     </>
                 )}
+
+                {/* Option 13: Dashboard Statistics / Vault Health Tab */}
+                {activeTab === 'stats' && (
+                    <VaultStats
+                        passwords={passwords}
+                        onFilterBy={(filterType) => {
+                            setActiveTab('passwords');
+                            setQuickFilter(filterType);
+                        }}
+                        texts={texts}
+                    />
+                )}
+
                 {activeTab === 'account' && (
                     <AccountSettings
+                        passwords={passwords}
+                        onSave={onSave}
                         theme={theme}
                         toggleTheme={toggleTheme}
                         lang={lang}
@@ -319,6 +734,7 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
                         texts={texts}
                     />
                 )}
+
                 {activeTab === 'generator' && (
                     <div className="generator-page">
                         <h2>{texts.genTitle}</h2>
@@ -329,6 +745,7 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
                 )}
             </main>
 
+            {/* ADD / EDIT / DETAIL MODAL */}
             {showModal && (
                 <Modal
                     title={isViewMode ? texts.modalDetail : (editingItem ? texts.modalEdit : texts.modalAdd)}
@@ -338,18 +755,51 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
                         <div className="input-group">
                             <label className="input-label">{texts.labelTitle}</label>
                             <input
-                                type="text" placeholder={texts.titlePlaceholder}
-                                value={formData.title} onChange={e => setFormData({ ...formData, title: e.target.value })}
+                                type="text"
+                                placeholder={texts.titlePlaceholder}
+                                value={formData.title}
+                                onChange={e => setFormData({ ...formData, title: e.target.value })}
                                 required
                                 readOnly={isViewMode}
                                 className={isViewMode ? 'input-readonly' : ''}
                             />
                         </div>
+
+                        {/* Option 5: Category Selector in Modal */}
+                        <div className="input-group">
+                            <label className="input-label">{texts.labelCategory}</label>
+                            {isViewMode ? (
+                                <input
+                                    type="text"
+                                    value={
+                                        (CATEGORIES.find(c => c.key === formData.category)?.icon || '📌') + ' ' +
+                                        (texts[CATEGORIES.find(c => c.key === formData.category)?.labelKey] || formData.category || 'Diğer')
+                                    }
+                                    readOnly
+                                    className="input-readonly"
+                                />
+                            ) : (
+                                <select
+                                    className="category-modal-select"
+                                    value={formData.category || 'other'}
+                                    onChange={e => setFormData({ ...formData, category: e.target.value })}
+                                >
+                                    {CATEGORIES.filter(c => c.key !== 'all').map(cat => (
+                                        <option key={cat.key} value={cat.key}>
+                                            {cat.icon} {texts[cat.labelKey] || cat.key}
+                                        </option>
+                                    ))}
+                                </select>
+                            )}
+                        </div>
+
                         <div className="input-group">
                             <label className="input-label">{texts.labelUsername}</label>
                             <input
-                                type="text" placeholder={texts.usernamePlaceholder}
-                                value={formData.username} onChange={e => setFormData({ ...formData, username: e.target.value })}
+                                type="text"
+                                placeholder={texts.usernamePlaceholder}
+                                value={formData.username}
+                                onChange={e => setFormData({ ...formData, username: e.target.value })}
                                 readOnly={isViewMode}
                                 className={isViewMode ? 'input-readonly' : ''}
                             />
@@ -363,11 +813,14 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
                                 </div>
                             )}
                         </div>
+
                         <div className="input-group">
                             <label className="input-label">{texts.labelUrl}</label>
                             <input
-                                type="text" placeholder={texts.urlPlaceholder}
-                                value={formData.url} onChange={e => setFormData({ ...formData, url: e.target.value })}
+                                type="text"
+                                placeholder={texts.urlPlaceholder}
+                                value={formData.url}
+                                onChange={e => setFormData({ ...formData, url: e.target.value })}
                                 readOnly={isViewMode}
                                 className={isViewMode ? 'input-readonly' : ''}
                             />
@@ -381,8 +834,19 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
                                 </div>
                             )}
                         </div>
+
                         <div className="input-group">
-                            <label className="input-label">{texts.labelPassword}</label>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                                <label className="input-label" style={{ margin: 0 }}>{texts.labelPassword}</label>
+                                {formData.password && (
+                                    <span
+                                        className="strength-tag"
+                                        style={{ color: calculatePasswordStrength(formData.password).color, fontSize: '0.78rem', fontWeight: 600 }}
+                                    >
+                                        ● {lang === 'tr' ? calculatePasswordStrength(formData.password).labelTr : calculatePasswordStrength(formData.password).labelEn}
+                                    </span>
+                                )}
+                            </div>
                             <div className="input-with-icon">
                                 <input
                                     type={showPasswordField ? "text" : "password"}
@@ -403,16 +867,69 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
                                     {showPasswordField ? <EyeOffIcon /> : <EyeIcon />}
                                 </button>
                             </div>
-                            {isViewMode && (
-                                <div style={{ marginTop: '6px' }}>
+
+                            {/* Option 18: Breach Check Button in View Mode */}
+                            {isViewMode && formData.password && (
+                                <div className="modal-pw-actions" style={{ display: 'flex', gap: '8px', marginTop: '6px', flexWrap: 'wrap' }}>
                                     <button type="button" className="btn-ghost" onClick={() => copyToClipboard(formData.password, texts.copiedPassword)} style={{ fontSize: '0.8rem', padding: '4px 10px' }}>
                                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
                                             <CopyIcon /> {texts.genCopy}
                                         </span>
                                     </button>
+                                    <button
+                                        type="button"
+                                        className="btn-ghost"
+                                        onClick={handleCheckCurrentBreach}
+                                        disabled={isCheckingBreach}
+                                        style={{ fontSize: '0.8rem', padding: '4px 10px' }}
+                                    >
+                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                                            <ShieldAlertIcon /> {isCheckingBreach ? texts.breachChecking : texts.checkBreachBtn}
+                                        </span>
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Option 18: Breach Result Notification */}
+                            {breachResult && (
+                                <div className={`breach-alert-card ${breachResult.pwned ? 'is-pwned' : 'is-safe'}`}>
+                                    {breachResult.pwned ? (
+                                        <>
+                                            <ShieldAlertIcon />
+                                            <span>
+                                                {texts.breachWarning.replace('{count}', breachResult.count.toLocaleString())}
+                                            </span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <CheckIcon />
+                                            <span>{texts.breachSafe}</span>
+                                        </>
+                                    )}
                                 </div>
                             )}
                         </div>
+
+                        {/* TOTP 2FA Key Field */}
+                        <div className="input-group">
+                            <label className="input-label">{texts.totpSecret}</label>
+                            <input
+                                type="text"
+                                placeholder={texts.totpSecretPlaceholder}
+                                value={formData.totpSecret || ''}
+                                onChange={e => setFormData({ ...formData, totpSecret: e.target.value.replace(/\s/g, '').toUpperCase() })}
+                                readOnly={isViewMode}
+                                className={isViewMode ? 'input-readonly' : ''}
+                                autoComplete="off"
+                                spellCheck="false"
+                                style={{ fontFamily: "'Space Grotesk', monospace", letterSpacing: '1px' }}
+                            />
+                        </div>
+
+                        {isViewMode && formData.totpSecret && (
+                            <TotpDisplay secret={formData.totpSecret} texts={texts} />
+                        )}
+
                         <div className="input-group">
                             <label className="input-label">{texts.labelNotes}</label>
                             <textarea
@@ -453,6 +970,7 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
                 </Modal>
             )}
 
+            {/* CONFIRM DELETE MODAL */}
             {deleteItem && (
                 <Modal title={texts.confirmDeleteTitle} onClose={closeModal}>
                     <div className="modal-delete-warning">
@@ -466,6 +984,7 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
                 </Modal>
             )}
 
+            {/* TOAST NOTIFICATION */}
             {toast.show && (
                 <div className="toast-notification">
                     <CheckIcon />
@@ -474,6 +993,6 @@ const Dashboard = ({ data, onLogout, onSave, theme, toggleTheme, lang, setLang, 
             )}
         </div>
     );
-}
+};
 
 export default Dashboard;
