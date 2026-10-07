@@ -1564,6 +1564,12 @@ button {
   color: var(--accent-light);
 }
 
+.settings-section .btn-primary svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
 .warning-text {
   color: var(--danger);
   margin-bottom: 1.25rem;
@@ -2666,6 +2672,17 @@ button {
   flex-wrap: wrap;
 }
 
+.key-file-login-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 0.75rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
 .auto-backup-list {
   display: flex;
   flex-direction: column;
@@ -3573,4 +3590,8 @@ button {
 .btn-ghost-sm:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+.key-file-login-row button {
+  white-space: nowrap;
+  flex-shrink: 0;
 }

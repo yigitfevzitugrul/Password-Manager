@@ -84,6 +84,13 @@ function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleThe
     const [showDisablePrompt, setShowDisablePrompt] = useState(false);
     const [disablePassword, setDisablePassword] = useState('');
 
+    // Key File State
+    const [keyFileStatus, setKeyFileStatus] = useState({ enabled: false, path: null });
+    const [showKeyFilePrompt, setShowKeyFilePrompt] = useState(false);
+    const [keyFilePassword, setKeyFilePassword] = useState('');
+    const [keyFileMsg, setKeyFileMsg] = useState({ type: '', msg: '' });
+    const [keyFileBusy, setKeyFileBusy] = useState(false);
+
     // Import State
     const fileInputRef = useRef(null);
     const [importPreview, setImportPreview] = useState(null);
@@ -105,6 +112,12 @@ function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleThe
         }
     }, [backupPreview, backupNeedsPassword]);
 
+    const refreshKeyFileStatus = () => {
+        if (window.electronAPI && window.electronAPI.getKeyFileStatus) {
+            window.electronAPI.getKeyFileStatus().then(res => setKeyFileStatus(res)).catch(() => {});
+        }
+    };
+
     const refreshAutoBackups = () => {
         if (window.electronAPI && window.electronAPI.listAutoBackups) {
             window.electronAPI.listAutoBackups().then(list => setAutoBackups(list || [])).catch(() => {});
@@ -123,6 +136,7 @@ function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleThe
             }
         }
         refreshAutoBackups();
+        refreshKeyFileStatus();
     }, []);
 
     // Change Master Password
@@ -209,6 +223,33 @@ function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleThe
             }
         } catch (err) {
             setTwoFAStatusMsg({ type: 'error', msg: err.message });
+        }
+    };
+
+    // Key File: Enable / Disable (both re-encrypt the vault, so the master password is required)
+    const handleToggleKeyFile = async (e) => {
+        e.preventDefault();
+        setKeyFileBusy(true);
+        setKeyFileMsg({ type: '', msg: '' });
+        try {
+            const res = keyFileStatus.enabled
+                ? await window.electronAPI.disableKeyFile(keyFilePassword)
+                : await window.electronAPI.enableKeyFile(keyFilePassword);
+            if (res.success) {
+                setKeyFileMsg({
+                    type: 'success',
+                    msg: keyFileStatus.enabled ? texts.keyFileDisabledSuccess : texts.keyFileEnabledSuccess
+                });
+                setShowKeyFilePrompt(false);
+                setKeyFilePassword('');
+                refreshKeyFileStatus();
+            } else if (!res.canceled) {
+                setKeyFileMsg({ type: 'error', msg: res.error });
+            }
+        } catch (err) {
+            setKeyFileMsg({ type: 'error', msg: err.message });
+        } finally {
+            setKeyFileBusy(false);
         }
     };
 
@@ -497,6 +538,77 @@ function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleThe
                             </form>
                         )}
                     </div>
+                )}
+            </div>
+
+            {/* KEY FILE SECTION */}
+            <div className="settings-section">
+                <div className="section-title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3><ShieldIcon /> {texts.keyFileTitle}</h3>
+                    <span className={`badge ${keyFileStatus.enabled ? 'badge-success' : 'badge-muted'}`}>
+                        {keyFileStatus.enabled ? texts.keyFileEnabledBadge : texts.keyFileDisabledBadge}
+                    </span>
+                </div>
+                <p className="section-subtitle">{texts.keyFileDesc}</p>
+                <p className="warning-text">{texts.keyFileWarning}</p>
+
+                {keyFileStatus.enabled && keyFileStatus.path && (
+                    <p className="section-subtitle">{texts.keyFileLocation} <code>{keyFileStatus.path}</code></p>
+                )}
+
+                {keyFileMsg.msg && (
+                    <div className={`status-message ${keyFileMsg.type}`}>
+                        {keyFileMsg.msg}
+                    </div>
+                )}
+
+                {!showKeyFilePrompt ? (
+                    <button
+                        className={keyFileStatus.enabled ? 'btn-danger' : 'btn-primary'}
+                        onClick={() => {
+                            setShowKeyFilePrompt(true);
+                            setKeyFileMsg({ type: '', msg: '' });
+                        }}
+                        style={{ width: 'auto', marginTop: '0.5rem' }}
+                    >
+                        {keyFileStatus.enabled ? texts.keyFileDisableBtn : texts.keyFileEnableBtn}
+                    </button>
+                ) : (
+                    <form onSubmit={handleToggleKeyFile} className="disable-2fa-form">
+                        <label className="input-label">
+                            {keyFileStatus.enabled ? texts.keyFileDisableConfirm : texts.keyFileEnableConfirm}
+                        </label>
+                        <div className="input-with-action">
+                            <input
+                                type="password"
+                                placeholder={texts.masterPassword}
+                                value={keyFilePassword}
+                                onChange={e => setKeyFilePassword(e.target.value)}
+                                autoFocus
+                                required
+                            />
+                            <button
+                                type="submit"
+                                className={keyFileStatus.enabled ? 'btn-danger' : 'btn-primary'}
+                                disabled={keyFileBusy}
+                                style={{ width: 'auto' }}
+                            >
+                                {keyFileBusy
+                                    ? texts.updating
+                                    : (keyFileStatus.enabled ? texts.keyFileDisableBtn : texts.keyFileCreateBtn)}
+                            </button>
+                            <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={() => {
+                                    setShowKeyFilePrompt(false);
+                                    setKeyFilePassword('');
+                                }}
+                            >
+                                {texts.btnCancel}
+                            </button>
+                        </div>
+                    </form>
                 )}
             </div>
 

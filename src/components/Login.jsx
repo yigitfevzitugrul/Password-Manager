@@ -95,6 +95,10 @@ function Login({ onLogin, texts, notice }) {
     const [is2FAStep, setIs2FAStep] = useState(false);
     const [twoFACode, setTwoFACode] = useState('');
 
+    // Key file (accounts whose vault key also depends on a key file)
+    const [keyFileRequired, setKeyFileRequired] = useState(false);
+    const [keyFileName, setKeyFileName] = useState('');
+
     const loadUsers = async () => {
         if (!window.electronAPI || !window.electronAPI.getUsers) {
             setIsLoadingUsers(false);
@@ -185,7 +189,7 @@ function Login({ onLogin, texts, notice }) {
 
     // --- LOGIN HANDLER ---
     const handleLogin = async (e) => {
-        e.preventDefault();
+        if (e) e.preventDefault();
         if (!window.electronAPI) {
             setError("Electron API bulunamadı.");
             return;
@@ -205,7 +209,13 @@ function Login({ onLogin, texts, notice }) {
                 } else {
                     onLogin(res.data, res.user);
                 }
+            } else if (res.needsKeyFile) {
+                // The key file is not where it was last time (e.g. USB drive not plugged in)
+                setKeyFileRequired(true);
+                setKeyFileName('');
+                setError(texts.keyFileNeeded);
             } else {
+                if (res.keyFileRequired) setKeyFileRequired(true);
                 setError(res.error || (texts ? texts.errorWrongPass : 'Giriş başarısız.'));
                 setPassword('');
 
@@ -219,6 +229,21 @@ function Login({ onLogin, texts, notice }) {
             setError(err.message);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleSelectKeyFile = async () => {
+        if (!window.electronAPI || !window.electronAPI.selectKeyFile) return;
+        try {
+            const res = await window.electronAPI.selectKeyFile(selectedUserId);
+            if (res.success) {
+                setKeyFileName(res.keyFileName);
+                setError('');
+            } else if (!res.canceled) {
+                setError(res.error);
+            }
+        } catch (err) {
+            setError(err.message);
         }
     };
 
@@ -472,6 +497,8 @@ function Login({ onLogin, texts, notice }) {
                                                     setSelectedUserId(e.target.value);
                                                     setError('');
                                                     setPassword('');
+                                                    setKeyFileRequired(false);
+                                                    setKeyFileName('');
                                                 }}
                                             >
                                                 {usersList.map(u => (
@@ -580,6 +607,16 @@ function Login({ onLogin, texts, notice }) {
                                         />
                                         <span>{texts.zeroKnowledgeAck}</span>
                                     </label>
+                                </div>
+                            )}
+
+                            {/* KEY FILE PICKER (only for accounts protected by a key file) */}
+                            {keyFileRequired && !isRegisterMode && (
+                                <div className="key-file-login-row">
+                                    <span>{keyFileName ? `${texts.keyFileSelected} ${keyFileName}` : texts.keyFileLoginHint}</span>
+                                    <button type="button" className="btn-ghost-sm" onClick={handleSelectKeyFile} disabled={isLocked}>
+                                        {texts.keyFileSelectBtn}
+                                    </button>
                                 </div>
                             )}
 

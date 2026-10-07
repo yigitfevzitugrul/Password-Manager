@@ -187,6 +187,16 @@ function setLastActiveUser(userId) {
     saveUsersConfig(config);
 }
 
+// Remembers where the user's key file was last found (null clears it). Only the path is stored.
+function setUserKeyFilePath(userId, keyFilePath) {
+    const config = getUsersList();
+    const user = config.users.find(u => u.id === userId);
+    if (!user) return;
+    if (keyFilePath) user.keyFilePath = keyFilePath;
+    else delete user.keyFilePath;
+    saveUsersConfig(config);
+}
+
 module.exports = {
     getUsersList,
     createNewUser,
@@ -195,6 +205,7 @@ module.exports = {
     checkUserVaultExists,
     getUserVaultPath,
     setLastActiveUser,
+    setUserKeyFilePath,
     writeFileAtomic,
     isValidUserId
 };

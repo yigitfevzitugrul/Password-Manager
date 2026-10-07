@@ -11,7 +11,8 @@ const {
   saveUserEncryptedData,
   readUserEncryptedData,
   checkUserVaultExists,
-  setLastActiveUser
+  setLastActiveUser,
+  setUserKeyFilePath
 } = require('./fileSystem.cjs');
 const { is2FAEnabled, save2FAConfig, save2FASecret, read2FASecret, remove2FAData } = require('./twoFactorAuth.cjs');
 const { generateSecret, verifyTOTP } = require('./totp.cjs');
@@ -21,8 +22,10 @@ const {
   encryptWithKey,
   decryptWithPassword,
   decryptWithKey,
-  verifyPassword
+  verifyPassword,
+  requiresKeyFile
 } = require('./encryption.cjs');
+const { generateKeyFile, readKeyFile } = require('./keyFile.cjs');
 
 process.env.DIST = path.join(__dirname, '../dist');
 process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : path.join(__dirname, '../public');
@@ -190,6 +193,8 @@ app.whenReady().then(() => {
   let pending2FALogin = null;
   let pending2FASetupSecret = null;
   let pendingBackup = null;
+  // Key file picked on the login screen, waiting for the next login attempt: { userId, secret, path }
+  let pendingKeyFile = null;
   const MAX_2FA_ATTEMPTS = 5;
   const MAX_MASTER_PASSWORD_LENGTH = 1024;
 
@@ -222,10 +227,15 @@ app.whenReady().then(() => {
     return true;
   });
 
+  function wipeKey(keyMaterial) {
+    keyMaterial.key.fill(0);
+    if (keyMaterial.keyFileSecret) keyMaterial.keyFileSecret.fill(0);
+  }
+
   function lockVault(notifyRenderer) {
     const wasUnlocked = currentUserId !== null || pending2FALogin !== null;
-    if (currentKey) currentKey.key.fill(0);
-    if (pending2FALogin) pending2FALogin.keyMaterial.key.fill(0);
+    if (currentKey) wipeKey(currentKey);
+    if (pending2FALogin) wipeKey(pending2FALogin.keyMaterial);
     currentUserId = null;
     currentKey = null;
     pending2FALogin = null;
@@ -404,13 +414,40 @@ app.whenReady().then(() => {
     }
     if (!data) return { success: false, error: 'Kullanıcı verisi bulunamadı.' };
 
+    // Vaults protected by a key file need it before the password can even be checked
+    const keyFileRequired = requiresKeyFile(data);
+    let keyFileSecret = null;
+    let keyFilePath = null;
+    if (keyFileRequired) {
+      if (pendingKeyFile && pendingKeyFile.userId === userId) {
+        keyFileSecret = Buffer.from(pendingKeyFile.secret);
+        keyFilePath = pendingKeyFile.path;
+      } else if (typeof targetUser.keyFilePath === 'string') {
+        try {
+          keyFileSecret = readKeyFile(targetUser.keyFilePath);
+          keyFilePath = targetUser.keyFilePath;
+        } catch (e) {
+          keyFileSecret = null;
+        }
+      }
+      if (!keyFileSecret) {
+        return {
+          success: false,
+          needsKeyFile: true,
+          keyFileRequired: true,
+          keyFileName: typeof targetUser.keyFilePath === 'string' ? path.basename(targetUser.keyFilePath) : null
+        };
+      }
+    }
+
     let decryptedJSON;
     let keyMaterial;
     try {
-      const result = await decryptWithPassword(data, masterPassword);
+      const result = await decryptWithPassword(data, masterPassword, keyFileSecret);
       decryptedJSON = result.text;
       keyMaterial = result.keyMaterial;
     } catch (err) {
+      const error = keyFileRequired ? 'Hatalı şifre veya anahtar dosyası.' : 'Hatalı şifre.';
       const lockoutDuration = registerFailedAttempt();
       if (lockoutDuration > 0) {
         return {
@@ -418,7 +455,8 @@ app.whenReady().then(() => {
           locked: true,
           remainingSeconds: lockoutDuration,
           attempts: loginAttempts,
-          error: 'Hatalı şifre.'
+          keyFileRequired,
+          error
         };
       }
       return {
@@ -426,7 +464,8 @@ app.whenReady().then(() => {
         locked: false,
         attempts: loginAttempts,
         attemptsRemaining: getRemainingAttempts(loginAttempts),
-        error: 'Hatalı şifre.'
+        keyFileRequired,
+        error
       };
     }
 
@@ -447,7 +486,7 @@ app.whenReady().then(() => {
             : (await decryptWithPassword(encryptedSecret, masterPassword)).text;
         } catch (e) {
           try {
-            totpSecret = (await decryptWithPassword(encryptedSecret, masterPassword)).text;
+            totpSecret = (await decryptWithPassword(encryptedSecret, masterPassword, keyFileSecret)).text;
           } catch (e2) {
             return { success: false, error: '2FA verisi çözülemedi. Giriş yapılamıyor.' };
           }
@@ -464,6 +503,14 @@ app.whenReady().then(() => {
       }
 
       lockVault(false);
+
+      if (keyFileRequired) {
+        if (pendingKeyFile) pendingKeyFile.secret.fill(0);
+        pendingKeyFile = null;
+        if (keyFilePath && targetUser.keyFilePath !== keyFilePath) {
+          setUserKeyFilePath(userId, keyFilePath);
+        }
+      }
 
       try {
         createAutoBackup(userId);
@@ -646,6 +693,36 @@ app.whenReady().then(() => {
     return { success: true };
   });
 
+  // Re-encrypts everything a user owns (vault, 2FA secret, automatic backups) with a new key
+  // and makes it the session key. Nothing is written unless all of it can be decrypted first.
+  function rekeyUser(userId, oldKey, newKey) {
+    const jsonStr = decryptWithKey(readUserEncryptedData(userId), oldKey);
+    let rawSecret = null;
+    if (is2FAEnabled(userId)) {
+      const encryptedSecret = read2FASecret(userId);
+      if (!encryptedSecret) throw new Error('2FA verisi okunamadı.');
+      rawSecret = decryptWithKey(encryptedSecret, oldKey);
+    }
+
+    saveUserEncryptedData(userId, encryptWithKey(jsonStr, newKey));
+    if (rawSecret !== null) {
+      save2FASecret(userId, encryptWithKey(rawSecret, newKey));
+    }
+
+    // Old backups must not stay readable with the previous key
+    for (const backup of listAutoBackups(userId)) {
+      try {
+        const backupJson = decryptWithKey(readAutoBackup(userId, backup.name), oldKey);
+        writeAutoBackup(userId, backup.name, encryptWithKey(backupJson, newKey));
+      } catch (e) {
+        console.error('Backup re-encryption skipped:', backup.name);
+      }
+    }
+
+    currentKey = newKey;
+    wipeKey(oldKey);
+  }
+
   handle('change-password', async (event, oldPassword, newPassword) => {
     if (!currentUserId || !currentKey) throw new Error('Oturum açık değil.');
     const userId = currentUserId;
@@ -663,43 +740,125 @@ app.whenReady().then(() => {
         return { success: false, error: 'Eski şifre yanlış.' };
       }
 
-      const newKey = await createKey(newPassword);
+      const newKey = await createKey(
+        newPassword,
+        oldKey.keyFileSecret ? Buffer.from(oldKey.keyFileSecret) : null
+      );
       if (currentUserId !== userId || currentKey !== oldKey) {
         return { success: false, error: 'Oturum açık değil.' };
       }
 
-      // Decrypt everything first so nothing is written unless all of it can be re-encrypted.
-      const jsonStr = decryptWithKey(readUserEncryptedData(userId), oldKey);
-      let rawSecret = null;
-      if (is2FAEnabled(userId)) {
-        const encryptedSecret = read2FASecret(userId);
-        if (!encryptedSecret) {
-          return { success: false, error: 'Şifre değiştirme hatası: 2FA verisi okunamadı.' };
-        }
-        rawSecret = decryptWithKey(encryptedSecret, oldKey);
-      }
-
-      saveUserEncryptedData(userId, encryptWithKey(jsonStr, newKey));
-      if (rawSecret !== null) {
-        save2FASecret(userId, encryptWithKey(rawSecret, newKey));
-      }
-
-      // Old backups must not stay readable with the previous master password
-      for (const backup of listAutoBackups(userId)) {
-        try {
-          const backupJson = decryptWithKey(readAutoBackup(userId, backup.name), oldKey);
-          writeAutoBackup(userId, backup.name, encryptWithKey(backupJson, newKey));
-        } catch (e) {
-          console.error('Backup re-encryption skipped:', backup.name);
-        }
-      }
-
-      currentKey = newKey;
-      oldKey.key.fill(0);
+      rekeyUser(userId, oldKey, newKey);
       return { success: true };
     } catch (err) {
       console.error('Change password error:', err.message);
       return { success: false, error: 'Şifre değiştirme hatası: ' + err.message };
+    }
+  });
+
+  // --- Key file (second factor that is part of the encryption key) ---
+  const KEY_FILE_FILTERS = [
+    { name: 'Orenda Pass Anahtar Dosyası', extensions: ['opkey'] },
+    { name: 'Tüm Dosyalar', extensions: ['*'] }
+  ];
+
+  // Login screen: pick the key file for an account before logging in
+  handle('select-key-file', async (event, userId) => {
+    const user = getUsersList().users.find(u => u.id === userId);
+    if (!user) return { success: false, error: 'Kayıtlı kullanıcı bulunamadı.' };
+
+    const result = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: KEY_FILE_FILTERS });
+    if (result.canceled || result.filePaths.length === 0) return { success: false, canceled: true };
+
+    try {
+      const secret = readKeyFile(result.filePaths[0]);
+      if (pendingKeyFile) pendingKeyFile.secret.fill(0);
+      pendingKeyFile = { userId: user.id, secret, path: result.filePaths[0] };
+      return { success: true, keyFileName: path.basename(result.filePaths[0]) };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  handle('get-key-file-status', () => {
+    if (!currentUserId || !currentKey) return { enabled: false };
+    const user = getUsersList().users.find(u => u.id === currentUserId);
+    return {
+      enabled: Boolean(currentKey.keyFileSecret),
+      path: user && typeof user.keyFilePath === 'string' ? user.keyFilePath : null
+    };
+  });
+
+  // Checks the master password against the session key without disturbing the session
+  async function confirmMasterPassword(masterPassword) {
+    const userId = currentUserId;
+    const key = currentKey;
+    let passwordOk = false;
+    try {
+      passwordOk = await verifyPassword(masterPassword, key);
+    } catch (e) {
+      passwordOk = false;
+    }
+    if (currentUserId !== userId || currentKey !== key) return { error: 'Oturum açık değil.' };
+    if (!passwordOk) return { error: 'Ana şifre hatalı.' };
+    return { userId, key };
+  }
+
+  handle('enable-key-file', async (event, masterPassword) => {
+    if (!currentUserId || !currentKey) return { success: false, error: 'Oturum açık değil.' };
+    if (currentKey.keyFileSecret) return { success: false, error: 'Anahtar dosyası zaten etkin.' };
+
+    const confirmed = await confirmMasterPassword(masterPassword);
+    if (confirmed.error) return { success: false, error: confirmed.error };
+    const { userId, key: oldKey } = confirmed;
+
+    const result = await dialog.showSaveDialog(win, {
+      title: 'Anahtar dosyasını kaydedin (tercihen bir USB belleğe)',
+      defaultPath: path.join(app.getPath('documents'), 'orenda-pass.opkey'),
+      filters: KEY_FILE_FILTERS
+    });
+    if (result.canceled || !result.filePath) return { success: false, canceled: true };
+
+    try {
+      // The key file must be safely on disk before anything is encrypted with it
+      const { secret, content } = generateKeyFile();
+      fs.writeFileSync(result.filePath, content, { encoding: 'utf8', mode: 0o600 });
+      if (!readKeyFile(result.filePath).equals(secret)) {
+        throw new Error('Anahtar dosyası doğrulanamadı.');
+      }
+
+      const newKey = await createKey(masterPassword, secret);
+      if (currentUserId !== userId || currentKey !== oldKey) {
+        return { success: false, error: 'Oturum açık değil.' };
+      }
+      rekeyUser(userId, oldKey, newKey);
+      setUserKeyFilePath(userId, result.filePath);
+      return { success: true, path: result.filePath };
+    } catch (err) {
+      console.error('Enable key file error:', err.message);
+      return { success: false, error: 'Anahtar dosyası etkinleştirilemedi: ' + err.message };
+    }
+  });
+
+  handle('disable-key-file', async (event, masterPassword) => {
+    if (!currentUserId || !currentKey) return { success: false, error: 'Oturum açık değil.' };
+    if (!currentKey.keyFileSecret) return { success: false, error: 'Anahtar dosyası etkin değil.' };
+
+    const confirmed = await confirmMasterPassword(masterPassword);
+    if (confirmed.error) return { success: false, error: confirmed.error };
+    const { userId, key: oldKey } = confirmed;
+
+    try {
+      const newKey = await createKey(masterPassword);
+      if (currentUserId !== userId || currentKey !== oldKey) {
+        return { success: false, error: 'Oturum açık değil.' };
+      }
+      rekeyUser(userId, oldKey, newKey);
+      setUserKeyFilePath(userId, null);
+      return { success: true };
+    } catch (err) {
+      console.error('Disable key file error:', err.message);
+      return { success: false, error: 'Anahtar dosyası kapatılamadı: ' + err.message };
     }
   });
 
@@ -812,12 +971,34 @@ app.whenReady().then(() => {
     const pending = pendingBackup;
 
     try {
-      const { text } = await decryptWithPassword(pending.data, password);
+      let keyFileSecret = null;
+      if (requiresKeyFile(pending.data) && currentKey.keyFileSecret) {
+        try {
+          const { text } = await decryptWithPassword(pending.data, password, Buffer.from(currentKey.keyFileSecret));
+          const result = parseBackupText(text);
+          if (pendingBackup !== pending || !currentUserId) return { success: false, error: 'Oturum açık değil.' };
+          return backupOpened(result);
+        } catch (e) {
+          // made with another key file: ask for it below
+        }
+      }
+      if (requiresKeyFile(pending.data)) {
+        const picked = await dialog.showOpenDialog(win, {
+          title: 'Bu yedeğin anahtar dosyasını seçin',
+          properties: ['openFile'],
+          filters: KEY_FILE_FILTERS
+        });
+        if (picked.canceled || picked.filePaths.length === 0) {
+          return { success: false, needsPassword: true, error: 'Bu yedek için anahtar dosyası gerekiyor.' };
+        }
+        keyFileSecret = readKeyFile(picked.filePaths[0]);
+      }
+      const { text } = await decryptWithPassword(pending.data, password, keyFileSecret);
       const result = parseBackupText(text);
       if (pendingBackup !== pending || !currentUserId) return { success: false, error: 'Oturum açık değil.' };
       return backupOpened(result);
     } catch (e) {
-      return { success: false, needsPassword: true, error: 'Yedek şifresi hatalı veya dosya bozuk.' };
+      return { success: false, needsPassword: true, error: 'Yedek şifresi veya anahtar dosyası hatalı.' };
     }
   });
 
