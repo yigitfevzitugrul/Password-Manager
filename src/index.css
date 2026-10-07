@@ -2888,6 +2888,13 @@ button {
   margin-bottom: 0.75rem;
 }
 
+.breach-safe-banner svg,
+.breach-danger-banner svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
 .breached-items-list {
   display: flex;
   flex-direction: column;
