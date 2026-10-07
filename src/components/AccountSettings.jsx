@@ -110,6 +110,11 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
     const [quickPinMsg, setQuickPinMsg] = useState({ type: '', msg: '' });
     const [quickPinBusy, setQuickPinBusy] = useState(false);
 
+    // Update Check State
+    const [updateCheckEnabled, setUpdateCheckEnabled] = useState(() => localStorage.getItem('update_check') !== 'false');
+    const [updateStatus, setUpdateStatus] = useState(null);
+    const [checkingUpdate, setCheckingUpdate] = useState(false);
+
     // Import State
     const fileInputRef = useRef(null);
     const [importPreview, setImportPreview] = useState(null);
@@ -324,6 +329,25 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
             }
         } catch (err) {
             setQuickPinMsg({ type: 'error', msg: err.message });
+        }
+    };
+
+    const handleToggleUpdateCheck = () => {
+        setUpdateCheckEnabled(prev => {
+            localStorage.setItem('update_check', String(!prev));
+            return !prev;
+        });
+    };
+
+    const handleCheckUpdate = async () => {
+        setCheckingUpdate(true);
+        setUpdateStatus(null);
+        try {
+            setUpdateStatus(await window.electronAPI.checkForUpdates());
+        } catch (err) {
+            setUpdateStatus({ success: false, error: err.message });
+        } finally {
+            setCheckingUpdate(false);
         }
     };
 
@@ -1134,6 +1158,44 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
                     >
                         🇬🇧 English
                     </button>
+                </div>
+            </div>
+
+            {/* UPDATES */}
+            <div className="settings-section">
+                <h3><DownloadIcon /> {texts.updatesTitle}</h3>
+                <div className="settings-row">
+                    <span>{texts.updateCheckLabel}</span>
+                    <label className="toggle-switch">
+                        <input
+                            type="checkbox"
+                            checked={updateCheckEnabled}
+                            onChange={handleToggleUpdateCheck}
+                        />
+                        <span className="slider"></span>
+                    </label>
+                </div>
+                <p className="section-subtitle">{texts.updateCheckHint}</p>
+
+                {updateStatus && (
+                    <div className={`status-message ${updateStatus.success && !updateStatus.updateAvailable ? 'success' : (updateStatus.success ? '' : 'error')}`}>
+                        {!updateStatus.success
+                            ? texts.updateCheckFailed
+                            : (updateStatus.updateAvailable
+                                ? texts.updateAvailable.replace('{version}', updateStatus.latestVersion)
+                                : texts.updateUpToDate)}
+                    </div>
+                )}
+
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                    <button className="btn-secondary" onClick={handleCheckUpdate} disabled={checkingUpdate}>
+                        {checkingUpdate ? texts.updating : texts.updateCheckNowBtn}
+                    </button>
+                    {updateStatus && updateStatus.success && updateStatus.updateAvailable && (
+                        <button className="btn-primary" onClick={() => window.electronAPI.openReleasePage()} style={{ width: 'auto' }}>
+                            {texts.updateDownloadBtn}
+                        </button>
+                    )}
                 </div>
             </div>
 

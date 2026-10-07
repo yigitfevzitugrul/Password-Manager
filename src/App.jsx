@@ -13,6 +13,16 @@ function App() {
     const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
     const [lang, setLang] = useState(localStorage.getItem('lang') || 'tr');
     const [lockNotice, setLockNotice] = useState(false);
+    const [availableUpdate, setAvailableUpdate] = useState(null);
+
+    // Look for a newer release once at startup (can be turned off in Settings)
+    React.useEffect(() => {
+        if (localStorage.getItem('update_check') === 'false') return;
+        if (!window.electronAPI || !window.electronAPI.checkForUpdates) return;
+        window.electronAPI.checkForUpdates().then(res => {
+            if (res.success && res.updateAvailable) setAvailableUpdate(res.latestVersion);
+        }).catch(() => {});
+    }, []);
     const [autoLockMinutes, setAutoLockMinutes] = useState(readAutoLockMinutes);
     const [clipboardSeconds, setClipboardSeconds] = useState(readClipboardClearSeconds);
 
@@ -116,6 +126,17 @@ function App() {
 
     return (
         <div className="app-container">
+            {availableUpdate && (
+                <div className="update-banner">
+                    <span>{texts.updateAvailable.replace('{version}', availableUpdate)}</span>
+                    <button type="button" className="update-banner-action" onClick={() => window.electronAPI.openReleasePage()}>
+                        {texts.updateDownloadBtn}
+                    </button>
+                    <button type="button" className="update-banner-close" onClick={() => setAvailableUpdate(null)} aria-label={texts.btnClose}>
+                        ✕
+                    </button>
+                </div>
+            )}
             {isAuthenticated ? (
                 <Dashboard
                     data={passwords}

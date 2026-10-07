@@ -1269,4 +1269,75 @@ app.whenReady().then(() => {
   });
 
   handle('get-app-version', () => app.getVersion());
+
+  // --- Update check ---
+  // Only asks GitHub for the latest release number; nothing about the user or the vault is sent.
+  // Installing stays a manual step: the release page is opened in the browser.
+  const RELEASES_API_PATH = '/repos/yigitfevzitugrul/Password-Manager/releases/latest';
+  const RELEASES_PAGE_URL = 'https://github.com/yigitfevzitugrul/Password-Manager/releases/latest';
+
+  function parseVersion(value) {
+    const match = /^v?(\d+)\.(\d+)\.(\d+)/.exec(typeof value === 'string' ? value.trim() : '');
+    return match ? match.slice(1).map(Number) : null;
+  }
+
+  function isNewerVersion(candidate, current) {
+    for (let i = 0; i < 3; i++) {
+      if (candidate[i] !== current[i]) return candidate[i] > current[i];
+    }
+    return false;
+  }
+
+  handle('check-for-updates', () => {
+    return new Promise((resolve) => {
+      const currentVersion = app.getVersion();
+      const fail = (error) => resolve({ success: false, currentVersion, error });
+
+      const req = https.request({
+        hostname: 'api.github.com',
+        path: RELEASES_API_PATH,
+        method: 'GET',
+        headers: { 'User-Agent': 'OrendaPass-App', 'Accept': 'application/vnd.github+json' },
+        timeout: 8000
+      }, (res) => {
+        if (res.statusCode !== 200) {
+          res.resume();
+          return fail(`Sunucu hatası (${res.statusCode})`);
+        }
+        let body = '';
+        res.on('data', chunk => {
+          body += chunk;
+          if (body.length > 1024 * 1024) req.destroy(new Error('Yanıt çok büyük'));
+        });
+        res.on('end', () => {
+          try {
+            const latest = parseVersion(JSON.parse(body).tag_name);
+            const current = parseVersion(currentVersion);
+            if (!latest || !current) return fail('Sürüm bilgisi okunamadı');
+            resolve({
+              success: true,
+              currentVersion,
+              latestVersion: latest.join('.'),
+              updateAvailable: isNewerVersion(latest, current)
+            });
+          } catch (e) {
+            fail('Sürüm bilgisi okunamadı');
+          }
+        });
+      });
+
+      req.on('error', () => fail('Bağlantı hatası'));
+      req.on('timeout', () => {
+        req.destroy();
+        fail('Zaman aşımı');
+      });
+      req.end();
+    });
+  });
+
+  // Always opens the fixed release page, never a URL supplied by the page or by the network
+  handle('open-release-page', () => {
+    shell.openExternal(RELEASES_PAGE_URL);
+    return true;
+  });
 });
