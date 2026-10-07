@@ -5,12 +5,14 @@
 const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
+const { writeFileAtomic, isValidUserId } = require('./fileSystem.cjs');
 
 function getUserDataPath() {
     return app.getPath('userData');
 }
 
 function get2FAConfigPath(userId = 'default') {
+    if (!isValidUserId(userId)) throw new Error('Geçersiz kullanıcı.');
     const userDataPath = getUserDataPath();
     if (userId === 'default') {
         const legacyPath = path.join(userDataPath, '2fa_config.json');
@@ -20,6 +22,7 @@ function get2FAConfigPath(userId = 'default') {
 }
 
 function get2FASecretPath(userId = 'default') {
+    if (!isValidUserId(userId)) throw new Error('Geçersiz kullanıcı.');
     const userDataPath = getUserDataPath();
     if (userId === 'default') {
         const legacyPath = path.join(userDataPath, '2fa_secret.enc');
@@ -43,12 +46,12 @@ function is2FAEnabled(userId = 'default') {
 
 function save2FAConfig(userId, enabled) {
     const configPath = get2FAConfigPath(userId);
-    fs.writeFileSync(configPath, JSON.stringify({ enabled }), 'utf8');
+    writeFileAtomic(configPath, JSON.stringify({ enabled }), 'utf8');
 }
 
 function save2FASecret(userId, encryptedBuffer) {
     const secretPath = get2FASecretPath(userId);
-    fs.writeFileSync(secretPath, encryptedBuffer);
+    writeFileAtomic(secretPath, encryptedBuffer);
 }
 
 function read2FASecret(userId = 'default') {

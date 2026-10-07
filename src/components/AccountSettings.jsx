@@ -306,7 +306,7 @@ function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleThe
                                         type="button"
                                         className="btn-icon"
                                         onClick={() => {
-                                            navigator.clipboard.writeText(secretKey);
+                                            window.electronAPI.copyToClipboard(secretKey);
                                         }}
                                         title={texts.genCopy}
                                     >

@@ -1,6 +1,32 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { app } = require('electron');
+
+/**
+ * Write a file atomically (temp file + rename) so a crash mid-write
+ * can never leave a truncated vault behind.
+ */
+function writeFileAtomic(filePath, data, encoding) {
+    const tmpPath = `${filePath}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+    try {
+        const fd = fs.openSync(tmpPath, 'w', 0o600);
+        try {
+            fs.writeFileSync(fd, data, encoding);
+            fs.fsyncSync(fd);
+        } finally {
+            fs.closeSync(fd);
+        }
+        fs.renameSync(tmpPath, filePath);
+    } catch (e) {
+        try { fs.unlinkSync(tmpPath); } catch (_) { /* nothing to clean up */ }
+        throw e;
+    }
+}
+
+function isValidUserId(userId) {
+    return typeof userId === 'string' && /^[A-Za-z0-9_]{1,64}$/.test(userId);
+}
 
 function getUserDataDir() {
     if (app && typeof app.getPath === 'function') {
@@ -49,7 +75,7 @@ function getUsersList() {
             ],
             lastActiveUserId: 'default'
         };
-        fs.writeFileSync(configPath, JSON.stringify(initialConfig, null, 2), 'utf8');
+        writeFileAtomic(configPath, JSON.stringify(initialConfig, null, 2), 'utf8');
         return initialConfig;
     }
 
@@ -58,7 +84,7 @@ function getUsersList() {
 
 function saveUsersConfig(config) {
     const configPath = getUsersConfigPath();
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+    writeFileAtomic(configPath, JSON.stringify(config, null, 2), 'utf8');
 }
 
 /**
@@ -99,7 +125,7 @@ function createNewUser(userData) {
         }
     }
 
-    const userId = 'u_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+    const userId = 'u_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex');
     const vaultFileName = `vault_${userId}.enc`;
 
     const newUser = {
@@ -120,6 +146,9 @@ function createNewUser(userData) {
 }
 
 function getUserVaultPath(userId) {
+    if (!isValidUserId(userId)) {
+        throw new Error('Geçersiz kullanıcı.');
+    }
     const config = getUsersList();
     const user = config.users.find(u => u.id === userId);
     if (!user) {
@@ -127,12 +156,16 @@ function getUserVaultPath(userId) {
         if (userId === 'default') return getLegacyVaultPath();
         return path.join(getUserDataDir(), `vault_${userId}.enc`);
     }
-    return path.join(getUserDataDir(), user.vaultFile || `vault_${userId}.enc`);
+    // basename: a tampered users.json must not be able to point outside the data directory
+    const vaultFile = typeof user.vaultFile === 'string' && user.vaultFile
+        ? path.basename(user.vaultFile)
+        : `vault_${userId}.enc`;
+    return path.join(getUserDataDir(), vaultFile);
 }
 
 function saveUserEncryptedData(userId, encryptedBuffer) {
     const filePath = getUserVaultPath(userId);
-    fs.writeFileSync(filePath, encryptedBuffer);
+    writeFileAtomic(filePath, encryptedBuffer);
 }
 
 function readUserEncryptedData(userId) {
@@ -161,5 +194,7 @@ module.exports = {
     readUserEncryptedData,
     checkUserVaultExists,
     getUserVaultPath,
-    setLastActiveUser
+    setLastActiveUser,
+    writeFileAtomic,
+    isValidUserId
 };

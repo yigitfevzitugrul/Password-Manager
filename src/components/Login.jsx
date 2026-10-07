@@ -72,7 +72,7 @@ const CopyIcon = () => (
     </svg>
 );
 
-function Login({ onLogin, texts }) {
+function Login({ onLogin, texts, notice }) {
     const [usersList, setUsersList] = useState([]);
     const [selectedUserId, setSelectedUserId] = useState('');
     const [isLoadingUsers, setIsLoadingUsers] = useState(true);
@@ -276,6 +276,15 @@ function Login({ onLogin, texts }) {
             } else {
                 setError(res.error || 'Doğrulama kodu geçersiz.');
                 setTwoFACode('');
+                if (res.expired) {
+                    // Pending login was dropped by the main process: back to the password step
+                    setIs2FAStep(false);
+                    setPassword('');
+                    if (window.electronAPI.checkLockout) {
+                        const lockStatus = await window.electronAPI.checkLockout();
+                        if (lockStatus.locked) startLockoutCountdown(lockStatus.remainingSeconds);
+                    }
+                }
             }
         } catch (err) {
             setError(err.message);
@@ -774,6 +783,8 @@ function Login({ onLogin, texts }) {
                                     </label>
                                 </div>
                             )}
+
+                            {notice && !error && !isRegisterMode && <div className="attempts-warning"><span>{notice}</span></div>}
 
                             {error && (!isLocked || isRegisterMode) && <div className="error-message">{error}</div>}
 

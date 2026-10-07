@@ -39,7 +39,7 @@ Unlike conventional cloud-based password managers, **Orenda Pass** operates unde
 
 ## 🛡️ Key Features
 
-- 🔒 **End-to-End Local Encryption (AES-256):** Vault items are encrypted using industry-standard AES-256 cipher alongside PBKDF2 key derivation.
+- 🔒 **End-to-End Local Encryption (AES-256):** Vault items are encrypted using industry-standard AES-256 cipher alongside scrypt key derivation.
 - 👥 **Multi-User Account Architecture:** Complete isolation between multiple users on the same computer, each with their own encrypted vault.
 - 🔐 **Two-Factor Authentication (2FA / TOTP):**
   - **Vault Entry 2FA:** Protect your master vault login using Google Authenticator, Microsoft Authenticator, or any compatible TOTP app.
@@ -105,12 +105,12 @@ Two-factor authentication configuration, streamlined JSON & CSV backup actions, 
                                   |
                                   v
 +-------------------------------------------------------------------+
-|            PBKDF2 Key Derivation (100,000+ Iterations)            |
+|            scrypt Key Derivation (100,000+ Iterations)            |
 +-------------------------------------------------------------------+
                                   |
                                   v
 +-------------------------------------------------------------------+
-|                     AES-256-GCM / CBC Encryption                  |
+|                     AES-256-GCM Encryption                        |
 +-------------------------------------------------------------------+
                                   |
                                   v
@@ -166,7 +166,7 @@ Two-factor authentication configuration, streamlined JSON & CSV backup actions, 
 | **UI Framework** | [React 19](https://react.dev/) | Component architecture & reactivity |
 | **Build Tool** | [Vite 7](https://vitejs.dev/) | Fast HMR dev server & asset bundler |
 | **Packaging** | [electron-builder](https://www.electron.build/) | NSIS Windows installer generation |
-| **Cryptography** | Node.js `crypto` | AES-256, PBKDF2, SHA-256 / SHA-1 |
+| **Cryptography** | Node.js `crypto` | AES-256, scrypt, SHA-256 / SHA-1 |
 | **Design & Typography**| Space Grotesk & Inter | Modern dark-mode aesthetic |
 
 ---

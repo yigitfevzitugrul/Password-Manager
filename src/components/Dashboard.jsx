@@ -406,7 +406,7 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
 
     const copyToClipboard = (text, label) => {
         if (!text) return;
-        navigator.clipboard.writeText(text);
+        window.electronAPI.copyToClipboard(text);
         showToast(label || texts.copied || 'Kopyalandı');
     };
 
@@ -916,8 +916,13 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
 
                             {/* Option 18: Breach Result Notification */}
                             {breachResult && (
-                                <div className={`breach-alert-card ${breachResult.pwned ? 'is-pwned' : 'is-safe'}`}>
-                                    {breachResult.pwned ? (
+                                <div className={`breach-alert-card ${breachResult.pwned || breachResult.error ? 'is-pwned' : 'is-safe'}`}>
+                                    {breachResult.error ? (
+                                        <>
+                                            <ShieldAlertIcon />
+                                            <span>{texts.breachCheckFailed}</span>
+                                        </>
+                                    ) : breachResult.pwned ? (
                                         <>
                                             <ShieldAlertIcon />
                                             <span>

@@ -7,7 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     checkLockout: () => ipcRenderer.invoke('check-lockout'),
     sendEmailCode: (data) => ipcRenderer.invoke('send-email-code', data),
     verifyEmailCode: (data) => ipcRenderer.invoke('verify-email-code', data),
-    register: (payload, password) => ipcRenderer.invoke('register', payload, password),
+    register: (payload) => ipcRenderer.invoke('register', payload),
     login: (userId, password) => ipcRenderer.invoke('login', userId, password),
     verify2FALogin: (code) => ipcRenderer.invoke('verify-2fa-login', code),
     cancel2FALogin: () => ipcRenderer.invoke('cancel-2fa-login'),
@@ -19,4 +19,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     changePassword: (oldPw, newPw) => ipcRenderer.invoke('change-password', oldPw, newPw),
     logout: () => ipcRenderer.invoke('logout'),
     checkPwnedPassword: (password) => ipcRenderer.invoke('check-pwned-password', password),
+    copyToClipboard: (text) => ipcRenderer.invoke('copy-to-clipboard', text),
+    onVaultLocked: (callback) => {
+        const listener = () => callback();
+        ipcRenderer.on('vault-locked', listener);
+        return () => ipcRenderer.removeListener('vault-locked', listener);
+    },
 });

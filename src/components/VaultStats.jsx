@@ -41,6 +41,7 @@ function VaultStats({ passwords, onFilterBy, texts }) {
     const [scanningBreaches, setScanningBreaches] = useState(false);
     const [scanProgress, setScanProgress] = useState(0);
     const [breachedItems, setBreachedItems] = useState(null);
+    const [scanFailures, setScanFailures] = useState(0);
 
     // Compute Vault Statistics
     const stats = useMemo(() => {
@@ -124,8 +125,10 @@ function VaultStats({ passwords, onFilterBy, texts }) {
         setScanningBreaches(true);
         setScanProgress(0);
         setBreachedItems([]);
+        setScanFailures(0);
 
         const results = [];
+        let failures = 0;
         const uniquePasswords = Array.from(new Set(passwords.map(p => p.password).filter(Boolean)));
         const breachMap = new Map();
 
@@ -133,11 +136,13 @@ function VaultStats({ passwords, onFilterBy, texts }) {
             const pw = uniquePasswords[i];
             try {
                 const res = await window.electronAPI.checkPwnedPassword(pw);
-                if (res.pwned) {
+                if (res.error) {
+                    failures++;
+                } else if (res.pwned) {
                     breachMap.set(pw, res.count);
                 }
             } catch (e) {
-                console.error(e);
+                failures++;
             }
             setScanProgress(Math.round(((i + 1) / uniquePasswords.length) * 100));
         }
@@ -152,6 +157,7 @@ function VaultStats({ passwords, onFilterBy, texts }) {
         });
 
         setBreachedItems(results);
+        setScanFailures(failures);
         setScanningBreaches(false);
     };
 
@@ -324,7 +330,14 @@ function VaultStats({ passwords, onFilterBy, texts }) {
 
                 {breachedItems !== null && !scanningBreaches && (
                     <div className="breach-results-box">
+                        {scanFailures > 0 && (
+                            <div className="breach-danger-banner">
+                                <AlertTriangleIcon />
+                                <span>{texts.statsScanIncomplete.replace('{count}', scanFailures)}</span>
+                            </div>
+                        )}
                         {breachedItems.length === 0 ? (
+                            scanFailures > 0 ? null :
                             <div className="breach-safe-banner">
                                 <ShieldCheckIcon />
                                 <span>{texts.statsNoBreaches}</span>

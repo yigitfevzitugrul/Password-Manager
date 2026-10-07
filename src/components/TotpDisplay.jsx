@@ -60,7 +60,7 @@ function TotpDisplay({ secret, texts }) {
 
     const handleCopy = () => {
         if (error || code === '------') return;
-        navigator.clipboard.writeText(code);
+        window.electronAPI.copyToClipboard(code);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     };

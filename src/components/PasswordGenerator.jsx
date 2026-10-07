@@ -51,6 +51,16 @@ const DiceIcon = () => (
     </svg>
 );
 
+// Uniform random integer in [0, max) from the CSPRNG (rejection sampling, no modulo bias)
+function secureRandomInt(max) {
+    const limit = Math.floor(0x100000000 / max) * max;
+    const buf = new Uint32Array(1);
+    do {
+        crypto.getRandomValues(buf);
+    } while (buf[0] >= limit);
+    return buf[0] % max;
+}
+
 function PasswordGenerator({ onGenerate, texts, isStandalone = false }) {
     const [length, setLength] = useState(20);
     const [includeUppercase, setIncludeUppercase] = useState(true);
@@ -86,19 +96,19 @@ function PasswordGenerator({ onGenerate, texts, isStandalone = false }) {
 
         if (includeUppercase && upper.length > 0) {
             dictionary += upper;
-            guaranteed.push(upper[Math.floor(Math.random() * upper.length)]);
+            guaranteed.push(upper[secureRandomInt(upper.length)]);
         }
         if (includeLowercase && lower.length > 0) {
             dictionary += lower;
-            guaranteed.push(lower[Math.floor(Math.random() * lower.length)]);
+            guaranteed.push(lower[secureRandomInt(lower.length)]);
         }
         if (includeNumbers && nums.length > 0) {
             dictionary += nums;
-            guaranteed.push(nums[Math.floor(Math.random() * nums.length)]);
+            guaranteed.push(nums[secureRandomInt(nums.length)]);
         }
         if (includeSymbols && syms.length > 0) {
             dictionary += syms;
-            guaranteed.push(syms[Math.floor(Math.random() * syms.length)]);
+            guaranteed.push(syms[secureRandomInt(syms.length)]);
         }
 
         // Fallback if user unchecks everything
@@ -107,17 +117,14 @@ function PasswordGenerator({ onGenerate, texts, isStandalone = false }) {
         }
 
         const remainingLength = Math.max(0, length - guaranteed.length);
-        const array = new Uint32Array(remainingLength);
-        crypto.getRandomValues(array);
-
         let resultChars = [...guaranteed];
         for (let i = 0; i < remainingLength; i++) {
-            resultChars.push(dictionary.charAt(array[i] % dictionary.length));
+            resultChars.push(dictionary.charAt(secureRandomInt(dictionary.length)));
         }
 
         // Fisher-Yates shuffle
         for (let i = resultChars.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
+            const j = secureRandomInt(i + 1);
             [resultChars[i], resultChars[j]] = [resultChars[j], resultChars[i]];
         }
 
@@ -169,7 +176,7 @@ function PasswordGenerator({ onGenerate, texts, isStandalone = false }) {
 
     const handleCopy = () => {
         if (!generated) return;
-        navigator.clipboard.writeText(generated);
+        window.electronAPI.copyToClipboard(generated);
         setCopySuccess(true);
         setTimeout(() => setCopySuccess(false), 2000);
         if (onGenerate) onGenerate(generated);

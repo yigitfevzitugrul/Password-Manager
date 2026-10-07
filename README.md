@@ -39,7 +39,7 @@ Geleneksel bulut tabanlı şifre yöneticilerinin aksine, **Orenda Pass** "Sıf�
 
 ## 🛡️ Temel Özellikler
 
-- 🔒 **Uçtan Uca Yerel Şifreleme (AES-256):** Tüm kasa verileriniz endüstri standardı AES-256 algoritmaları ve PBKDF2 anahtar türetme ile şifrelenir.
+- 🔒 **Uçtan Uca Yerel Şifreleme (AES-256):** Tüm kasa verileriniz endüstri standardı AES-256 algoritmaları ve scrypt anahtar türetme ile şifrelenir.
 - 👥 **Çoklu Kullanıcı Desteği:** Aynı bilgisayarı kullanan farklı bireyler için birbirinden tamamen izole edilmiş, bağımsız şifrelenmiş kullanıcı hesapları.
 - 🔐 **İki Faktörlü Doğrulama (2FA / TOTP Entegrasyonu):**
   - **Uygulama İçi 2FA:** Kasaya girişte Google Authenticator, Microsoft Authenticator ve uyumlu TOTP uygulamaları desteği.
@@ -105,12 +105,12 @@ Karakter türlerine göre renklendirilmiş önizleme, bit entropisi göstergesi 
                                   |
                                   v
 +-------------------------------------------------------------------+
-|              PBKDF2 Anahtar Türetme (100.000+ İterasyon)           |
+|              scrypt Anahtar Türetme (100.000+ İterasyon)           |
 +-------------------------------------------------------------------+
                                   |
                                   v
 +-------------------------------------------------------------------+
-|                    AES-256-GCM / CBC Şifreleme                     |
+|                    AES-256-GCM Şifreleme                           |
 +-------------------------------------------------------------------+
                                   |
                                   v
@@ -166,7 +166,7 @@ Karakter türlerine göre renklendirilmiş önizleme, bit entropisi göstergesi 
 | **Ön Yüz Kütüphanesi** | [React 19](https://react.dev/) | Hızlı ve reaktif bileşen mimarisi |
 | **Derleme & Paketleme** | [Vite 7](https://vitejs.dev/) | Ultra hızlı HMR ve üretim derleyicisi |
 | **Dağıtım / Paketleyici** | [electron-builder](https://www.electron.build/) | Windows NSIS kurulum paketi oluşturucu |
-| **Güvenlik & Kripto** | Node.js `crypto` | AES-256, PBKDF2, SHA-256 / SHA-1 |
+| **Güvenlik & Kripto** | Node.js `crypto` | AES-256, scrypt, SHA-256 / SHA-1 |
 | **Tipografi & Stil** | Space Grotesk & Inter | Modern ve rafine kullanıcı deneyimi |
 
 ---

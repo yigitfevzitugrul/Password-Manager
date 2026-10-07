@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, Notification, Menu, shell, clipboard, session, powerMonitor } = require('electron');
 const path = require('path');
+const { fileURLToPath } = require('url');
 const fs = require('fs');
 const https = require('https');
 const crypto = require('crypto');
@@ -14,6 +15,13 @@ const {
 } = require('./fileSystem.cjs');
 const { is2FAEnabled, save2FAConfig, save2FASecret, read2FASecret, remove2FAData } = require('./twoFactorAuth.cjs');
 const { generateSecret, verifyTOTP } = require('./totp.cjs');
+const {
+  createKey,
+  encryptWithKey,
+  decryptWithPassword,
+  decryptWithKey,
+  verifyPassword
+} = require('./encryption.cjs');
 
 process.env.DIST = path.join(__dirname, '../dist');
 process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : path.join(__dirname, '../public');
@@ -21,6 +29,46 @@ process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : path.join(__dirnam
 let win;
 
 const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL'];
+const DEV_URL = VITE_DEV_SERVER_URL || 'http://localhost:5173';
+const INDEX_PATH = path.join(process.env.DIST, 'index.html');
+
+function normalizeFsPath(p) {
+  const resolved = path.resolve(p);
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+// Only the app's own page may be shown in the window or talk to the main process.
+function isAppUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (app.isPackaged) {
+      return parsed.protocol === 'file:' && normalizeFsPath(fileURLToPath(parsed)) === normalizeFsPath(INDEX_PATH);
+    }
+    return parsed.origin === new URL(DEV_URL).origin;
+  } catch (e) {
+    return false;
+  }
+}
+
+function isTrustedSender(event) {
+  if (!win || win.isDestroyed() || event.sender !== win.webContents) return false;
+  const frame = event.senderFrame;
+  if (!frame || frame !== win.webContents.mainFrame) return false;
+  return isAppUrl(frame.url);
+}
+
+function handle(channel, listener) {
+  ipcMain.handle(channel, (event, ...args) => {
+    if (!isTrustedSender(event)) throw new Error('Yetkisiz istek.');
+    return listener(event, ...args);
+  });
+}
+
+function safeEqual(a, b) {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
+}
 
 function getAppIcon() {
   const candidates = [
@@ -53,6 +101,10 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
+      webSecurity: true,
+      spellcheck: false,
+      devTools: !app.isPackaged,
     },
     autoHideMenuBar: true,
   });
@@ -69,18 +121,44 @@ function createWindow() {
     win?.webContents.send('main-process-message', (new Date).toLocaleString());
   });
 
-  const devUrl = 'http://localhost:5173';
-
-  if (VITE_DEV_SERVER_URL) {
-    win.loadURL(VITE_DEV_SERVER_URL);
-  } else {
-    if (!app.isPackaged) {
-      win.loadURL(devUrl);
-    } else {
-      win.loadFile(path.join(process.env.DIST, 'index.html'));
+  // Links never open inside the app: http(s) goes to the system browser, everything else is dropped.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        shell.openExternal(parsed.toString());
+      }
+    } catch (e) {
+      // ignore malformed URLs
     }
+    return { action: 'deny' };
+  });
+
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!isAppUrl(url)) event.preventDefault();
+  });
+
+  if (!app.isPackaged) {
+    win.loadURL(DEV_URL);
+  } else {
+    win.loadFile(INDEX_PATH);
   }
 }
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+}
+
+app.on('second-instance', () => {
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
+});
+
+app.on('web-contents-created', (event, contents) => {
+  contents.on('will-attach-webview', (e) => e.preventDefault());
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
@@ -96,12 +174,70 @@ app.on('activate', () => {
 });
 
 app.whenReady().then(() => {
+  if (app.isPackaged) {
+    Menu.setApplicationMenu(null);
+  }
+
+  // The app needs no web permissions (camera, geolocation, notifications from the page, ...)
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => callback(false));
+  session.defaultSession.setPermissionCheckHandler(() => false);
+
   createWindow();
 
+  // The master password itself is never kept: only the derived key lives in memory while unlocked.
   let currentUserId = null;
-  let currentPassword = null;
+  let currentKey = null;
   let pending2FALogin = null;
   let pending2FASetupSecret = null;
+  const MAX_2FA_ATTEMPTS = 5;
+  const MAX_MASTER_PASSWORD_LENGTH = 1024;
+
+  // --- Clipboard auto-clear ---
+  const CLIPBOARD_CLEAR_MS = 30 * 1000;
+  let clipboardSecret = null;
+  let clipboardTimer = null;
+
+  function clearClipboardIfOurs() {
+    if (clipboardTimer) {
+      clearTimeout(clipboardTimer);
+      clipboardTimer = null;
+    }
+    if (clipboardSecret !== null) {
+      try {
+        if (clipboard.readText() === clipboardSecret) clipboard.clear();
+      } catch (e) {
+        console.error('Clipboard clear error:', e.message);
+      }
+      clipboardSecret = null;
+    }
+  }
+
+  handle('copy-to-clipboard', (event, text) => {
+    if (typeof text !== 'string' || text.length === 0 || text.length > 100000) return false;
+    clearClipboardIfOurs();
+    clipboard.writeText(text);
+    clipboardSecret = text;
+    clipboardTimer = setTimeout(clearClipboardIfOurs, CLIPBOARD_CLEAR_MS);
+    return true;
+  });
+
+  function lockVault(notifyRenderer) {
+    const wasUnlocked = currentUserId !== null || pending2FALogin !== null;
+    if (currentKey) currentKey.key.fill(0);
+    if (pending2FALogin) pending2FALogin.keyMaterial.key.fill(0);
+    currentUserId = null;
+    currentKey = null;
+    pending2FALogin = null;
+    pending2FASetupSecret = null;
+    clearClipboardIfOurs();
+    if (notifyRenderer && wasUnlocked && win && !win.isDestroyed()) {
+      win.webContents.send('vault-locked');
+    }
+  }
+
+  powerMonitor.on('lock-screen', () => lockVault(true));
+  powerMonitor.on('suspend', () => lockVault(true));
+  app.on('before-quit', () => lockVault(false));
 
   // --- Login Attempt Limiting ---
   let loginAttempts = 0;
@@ -122,6 +258,15 @@ app.whenReady().then(() => {
     return 0;
   }
 
+  function registerFailedAttempt() {
+    loginAttempts++;
+    const lockoutDuration = getLockoutDuration(loginAttempts);
+    if (lockoutDuration > 0) {
+      lockoutUntil = Date.now() + lockoutDuration * 1000;
+    }
+    return lockoutDuration;
+  }
+
   function checkLockoutStatus() {
     const now = Date.now();
     if (now < lockoutUntil) {
@@ -139,12 +284,12 @@ app.whenReady().then(() => {
     };
   }
 
-  ipcMain.handle('check-lockout', () => {
+  handle('check-lockout', () => {
     return checkLockoutStatus();
   });
 
   // Get list of all accounts on this device
-  ipcMain.handle('get-users', () => {
+  handle('get-users', () => {
     const config = getUsersList();
     return {
       users: config.users.map(u => ({ id: u.id, username: u.username, createdAt: u.createdAt })),
@@ -152,19 +297,43 @@ app.whenReady().then(() => {
     };
   });
 
-  ipcMain.handle('check-user', () => {
+  handle('check-user', () => {
     const config = getUsersList();
     return config.users.length > 0;
   });
 
-  // In-memory cache for pending email verification codes: email -> { code, expiresAt, firstName, lastName }
+  // In-memory cache for pending email verification codes: email -> { code, expiresAt, attempts, firstName, lastName }
   const pendingEmailCodes = new Map();
 
   // Send 6-digit email verification code
-  ipcMain.handle('send-email-code', async (event, data) => {
-    const email = (data && data.email ? data.email : '').trim().toLowerCase();
-    const firstName = (data && data.firstName ? data.firstName : '').trim();
-    const lastName = (data && data.lastName ? data.lastName : '').trim();
+  const MAX_EMAIL_CODE_ATTEMPTS = 5;
+  const str = (value) => (typeof value === 'string' ? value : '');
+
+  // Returns an error message, or null when the code matches. Too many wrong guesses burn the code.
+  function checkEmailCode(email, code) {
+    const pending = pendingEmailCodes.get(email);
+    if (!pending) {
+      return 'Bu e-posta için bekleyen bir doğrulama kodu bulunamadı. Lütfen tekrar kod gönderin.';
+    }
+    if (Date.now() > pending.expiresAt) {
+      pendingEmailCodes.delete(email);
+      return 'Doğrulama kodunun süresi dolmuş. Lütfen yeni bir kod isteyin.';
+    }
+    if (!/^\d{6}$/.test(code) || !safeEqual(pending.code, code)) {
+      pending.attempts++;
+      if (pending.attempts >= MAX_EMAIL_CODE_ATTEMPTS) {
+        pendingEmailCodes.delete(email);
+        return 'Çok fazla hatalı deneme. Lütfen yeni bir kod isteyin.';
+      }
+      return 'Girdiğiniz doğrulama kodu hatalı.';
+    }
+    return null;
+  }
+
+  handle('send-email-code', async (event, data) => {
+    const email = str(data && data.email).trim().toLowerCase();
+    const firstName = str(data && data.firstName).trim();
+    const lastName = str(data && data.lastName).trim();
 
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return { success: false, error: 'Lütfen geçerli bir e-posta adresi girin.' };
@@ -177,9 +346,10 @@ app.whenReady().then(() => {
     }
 
     // Generate random 6-digit verification code
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const code = crypto.randomInt(100000, 1000000).toString();
     pendingEmailCodes.set(email, {
       code,
+      attempts: 0,
       expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes
       firstName,
       lastName
@@ -206,90 +376,71 @@ app.whenReady().then(() => {
   });
 
   // Verify email verification code
-  ipcMain.handle('verify-email-code', async (event, data) => {
-    const email = (data && data.email ? data.email : '').trim().toLowerCase();
-    const code = (data && data.code ? data.code : '').trim();
+  handle('verify-email-code', async (event, data) => {
+    const email = str(data && data.email).trim().toLowerCase();
+    const code = str(data && data.code).trim();
 
-    const pending = pendingEmailCodes.get(email);
-    if (!pending) {
-      return { success: false, error: 'Bu e-posta için bekleyen bir doğrulama kodu bulunamadı. Lütfen tekrar kod gönderin.' };
-    }
-
-    if (Date.now() > pending.expiresAt) {
-      pendingEmailCodes.delete(email);
-      return { success: false, error: 'Doğrulama kodunun süresi dolmuş. Lütfen yeni bir kod isteyin.' };
-    }
-
-    if (pending.code !== code) {
-      return { success: false, error: 'Girdiğiniz doğrulama kodu hatalı.' };
-    }
-
+    const error = checkEmailCode(email, code);
+    if (error) return { success: false, error };
     return { success: true };
   });
 
   // Create a brand new user account (Does NOT overwrite other users!)
-  ipcMain.handle('register', async (event, payload, legacyPassword) => {
-    const { encrypt } = require('./encryption.cjs');
-    let firstName = '', lastName = '', email = '', masterPassword = '', code = '';
-
-    if (typeof payload === 'object' && payload !== null) {
-      firstName = (payload.firstName || '').trim();
-      lastName = (payload.lastName || '').trim();
-      email = (payload.email || '').trim().toLowerCase();
-      masterPassword = payload.password || payload.masterPassword || '';
-      code = (payload.code || '').trim();
-    } else {
-      firstName = (payload || '').trim();
-      masterPassword = legacyPassword || '';
+  handle('register', async (event, payload) => {
+    if (typeof payload !== 'object' || payload === null) {
+      return { success: false, error: 'Geçersiz kayıt isteği.' };
     }
 
-    const username = lastName ? `${firstName} ${lastName}`.trim() : firstName;
+    const firstName = str(payload.firstName).trim();
+    const lastName = str(payload.lastName).trim();
+    const email = str(payload.email).trim().toLowerCase();
+    const masterPassword = str(payload.password);
+    const code = str(payload.code).trim();
+
+    const username = `${firstName} ${lastName}`.trim();
 
     if (!firstName) {
       return { success: false, error: 'İsim alanı boş bırakılamaz.' };
     }
-    if (typeof payload === 'object' && !lastName) {
+    if (!lastName) {
       return { success: false, error: 'Soyisim alanı boş bırakılamaz.' };
     }
-
-    // Verify email & code if registering via full form
-    if (typeof payload === 'object' && email) {
-      const pending = pendingEmailCodes.get(email);
-      if (!pending) {
-        return { success: false, error: 'Lütfen önce e-posta adresinize doğrulama kodu gönderin.' };
-      }
-      if (Date.now() > pending.expiresAt) {
-        pendingEmailCodes.delete(email);
-        return { success: false, error: 'Doğrulama kodunun süresi dolmuş. Lütfen yeni kod isteyin.' };
-      }
-      if (code && pending.code !== code) {
-        return { success: false, error: 'Girdiğiniz doğrulama kodu hatalı.' };
-      }
-      // Code is valid! Consume it
-      pendingEmailCodes.delete(email);
+    if (firstName.length > 64 || lastName.length > 64 || email.length > 254) {
+      return { success: false, error: 'Girilen bilgiler çok uzun.' };
     }
-
-    if (!masterPassword || masterPassword.length < 8) {
+    if (masterPassword.length < 8) {
       return { success: false, error: 'Şifre en az 8 karakter olmalıdır.' };
     }
+    if (masterPassword.length > MAX_MASTER_PASSWORD_LENGTH) {
+      return { success: false, error: 'Şifre çok uzun.' };
+    }
+    if (!email) {
+      return { success: false, error: 'Lütfen önce e-posta adresinize doğrulama kodu gönderin.' };
+    }
+
+    const codeError = checkEmailCode(email, code);
+    if (codeError) {
+      return { success: false, error: codeError };
+    }
+    // Code is valid! Consume it
+    pendingEmailCodes.delete(email);
 
     try {
+      const keyMaterial = await createKey(masterPassword);
       const newUser = createNewUser({
         username,
         firstName,
         lastName,
         email
       });
-      const initialData = JSON.stringify([]);
-      const encryptedBuffer = await encrypt(initialData, masterPassword);
 
-      saveUserEncryptedData(newUser.id, encryptedBuffer);
+      saveUserEncryptedData(newUser.id, encryptWithKey(JSON.stringify([]), keyMaterial));
 
+      lockVault(false);
       currentUserId = newUser.id;
-      currentPassword = masterPassword;
+      currentKey = keyMaterial;
       loginAttempts = 0;
       lockoutUntil = 0;
-      pending2FALogin = null;
 
       return {
         success: true,
@@ -303,13 +454,13 @@ app.whenReady().then(() => {
         data: []
       };
     } catch (err) {
-      console.error('Registration error:', err);
+      console.error('Registration error:', err.message);
       return { success: false, error: err.message };
     }
   });
 
   // Login with specific userId and password
-  ipcMain.handle('login', async (event, userId, masterPassword) => {
+  handle('login', async (event, userId, masterPassword) => {
     const now = Date.now();
     if (now < lockoutUntil) {
       const remainingSeconds = Math.ceil((lockoutUntil - now) / 1000);
@@ -321,68 +472,41 @@ app.whenReady().then(() => {
       };
     }
 
+    if (typeof masterPassword !== 'string' || masterPassword.length === 0 ||
+        masterPassword.length > MAX_MASTER_PASSWORD_LENGTH) {
+      return { success: false, error: 'Hatalı şifre.' };
+    }
+
     const config = getUsersList();
     let targetUser = config.users.find(u => u.id === userId);
 
     // If userId not found, fallback to first user
     if (!targetUser && config.users.length > 0) {
       targetUser = config.users[0];
-      userId = targetUser.id;
     }
 
     if (!targetUser) {
       return { success: false, error: 'Kayıtlı kullanıcı bulunamadı.' };
     }
+    userId = targetUser.id;
 
-    const { decrypt } = require('./encryption.cjs');
-    const data = readUserEncryptedData(userId);
+    let data;
+    try {
+      data = readUserEncryptedData(userId);
+    } catch (e) {
+      data = null;
+    }
     if (!data) return { success: false, error: 'Kullanıcı verisi bulunamadı.' };
 
+    let decryptedJSON;
+    let keyMaterial;
     try {
-      const decryptedJSON = await decrypt(data, masterPassword);
-
-      // Check if this specific user has 2FA enabled
-      if (is2FAEnabled(userId)) {
-        const encryptedSecret = read2FASecret(userId);
-        if (encryptedSecret) {
-          try {
-            const totpSecret = await decrypt(encryptedSecret, masterPassword);
-            pending2FALogin = {
-              userId,
-              username: targetUser.username,
-              masterPassword,
-              decryptedData: JSON.parse(decryptedJSON),
-              totpSecret,
-              expiresAt: Date.now() + 5 * 60 * 1000
-            };
-            return {
-              success: true,
-              require2FA: true,
-              userId
-            };
-          } catch (e) {
-            console.error('Failed to decrypt 2FA secret for user:', e);
-          }
-        }
-      }
-
-      currentUserId = userId;
-      currentPassword = masterPassword;
-      setLastActiveUser(userId);
-      loginAttempts = 0;
-      lockoutUntil = 0;
-      pending2FALogin = null;
-
-      return {
-        success: true,
-        data: JSON.parse(decryptedJSON),
-        user: { id: targetUser.id, username: targetUser.username }
-      };
+      const result = await decryptWithPassword(data, masterPassword);
+      decryptedJSON = result.text;
+      keyMaterial = result.keyMaterial;
     } catch (err) {
-      loginAttempts++;
-      const lockoutDuration = getLockoutDuration(loginAttempts);
+      const lockoutDuration = registerFailedAttempt();
       if (lockoutDuration > 0) {
-        lockoutUntil = Date.now() + lockoutDuration * 1000;
         return {
           success: false,
           locked: true,
@@ -399,21 +523,89 @@ app.whenReady().then(() => {
         error: 'Hatalı şifre.'
       };
     }
+
+    try {
+      let vaultData = JSON.parse(decryptedJSON);
+      if (!Array.isArray(vaultData)) vaultData = [];
+
+      // 2FA fails closed: if it is enabled but the secret cannot be read, nobody gets in.
+      let totpSecret = null;
+      if (is2FAEnabled(userId)) {
+        const encryptedSecret = read2FASecret(userId);
+        if (!encryptedSecret) {
+          return { success: false, error: '2FA verisi okunamadı. Giriş yapılamıyor.' };
+        }
+        try {
+          totpSecret = keyMaterial
+            ? decryptWithKey(encryptedSecret, keyMaterial)
+            : (await decryptWithPassword(encryptedSecret, masterPassword)).text;
+        } catch (e) {
+          try {
+            totpSecret = (await decryptWithPassword(encryptedSecret, masterPassword)).text;
+          } catch (e2) {
+            return { success: false, error: '2FA verisi çözülemedi. Giriş yapılamıyor.' };
+          }
+        }
+      }
+
+      // Vaults written by older versions use a weaker key derivation: upgrade them in place.
+      if (!keyMaterial) {
+        keyMaterial = await createKey(masterPassword);
+        if (totpSecret !== null) {
+          save2FASecret(userId, encryptWithKey(totpSecret, keyMaterial));
+        }
+        saveUserEncryptedData(userId, encryptWithKey(JSON.stringify(vaultData), keyMaterial));
+      }
+
+      lockVault(false);
+
+      if (totpSecret !== null) {
+        pending2FALogin = {
+          userId,
+          username: targetUser.username,
+          keyMaterial,
+          decryptedData: vaultData,
+          totpSecret,
+          attempts: 0,
+          expiresAt: Date.now() + 5 * 60 * 1000
+        };
+        return {
+          success: true,
+          require2FA: true,
+          userId
+        };
+      }
+
+      currentUserId = userId;
+      currentKey = keyMaterial;
+      setLastActiveUser(userId);
+      loginAttempts = 0;
+      lockoutUntil = 0;
+
+      return {
+        success: true,
+        data: vaultData,
+        user: { id: targetUser.id, username: targetUser.username }
+      };
+    } catch (err) {
+      console.error('Login error:', err.message);
+      return { success: false, error: 'Kasa açılırken bir hata oluştu.' };
+    }
   });
 
   // Verify 2FA code during login
-  ipcMain.handle('verify-2fa-login', (event, code) => {
+  handle('verify-2fa-login', (event, code) => {
     if (!pending2FALogin || Date.now() > pending2FALogin.expiresAt) {
-      pending2FALogin = null;
-      return { success: false, error: 'Oturum süresi doldu. Lütfen tekrar giriş yapın.' };
+      if (pending2FALogin) lockVault(false);
+      return { success: false, expired: true, error: 'Oturum süresi doldu. Lütfen tekrar giriş yapın.' };
     }
 
-    const cleanCode = (code || '').replace(/\s+/g, '');
+    const cleanCode = str(code).replace(/\s+/g, '');
     const isValid = verifyTOTP(pending2FALogin.totpSecret, cleanCode);
 
     if (isValid) {
       currentUserId = pending2FALogin.userId;
-      currentPassword = pending2FALogin.masterPassword;
+      currentKey = pending2FALogin.keyMaterial;
       setLastActiveUser(currentUserId);
       const data = pending2FALogin.decryptedData;
       const user = { id: pending2FALogin.userId, username: pending2FALogin.username };
@@ -423,24 +615,34 @@ app.whenReady().then(() => {
       lockoutUntil = 0;
 
       return { success: true, data, user };
-    } else {
-      return { success: false, error: 'Geçersiz 2FA doğrulama kodu.' };
     }
+
+    pending2FALogin.attempts++;
+    if (pending2FALogin.attempts >= MAX_2FA_ATTEMPTS) {
+      lockVault(false);
+      registerFailedAttempt();
+      return {
+        success: false,
+        expired: true,
+        error: 'Çok fazla hatalı 2FA denemesi. Lütfen tekrar giriş yapın.'
+      };
+    }
+    return { success: false, error: 'Geçersiz 2FA doğrulama kodu.' };
   });
 
-  ipcMain.handle('cancel-2fa-login', () => {
-    pending2FALogin = null;
+  handle('cancel-2fa-login', () => {
+    if (pending2FALogin) lockVault(false);
     return { success: true };
   });
 
   // 2FA Setup & Status APIs for current user
-  ipcMain.handle('get-2fa-status', () => {
+  handle('get-2fa-status', () => {
     if (!currentUserId) return { enabled: false };
     return { enabled: is2FAEnabled(currentUserId) };
   });
 
-  ipcMain.handle('setup-2fa', async () => {
-    if (!currentUserId || !currentPassword) return { success: false, error: 'Oturum açık değil.' };
+  handle('setup-2fa', async () => {
+    if (!currentUserId || !currentKey) return { success: false, error: 'Oturum açık değil.' };
 
     const config = getUsersList();
     const user = config.users.find(u => u.id === currentUserId);
@@ -470,11 +672,11 @@ app.whenReady().then(() => {
     }
   });
 
-  ipcMain.handle('enable-2fa', async (event, code) => {
-    if (!currentUserId || !currentPassword) return { success: false, error: 'Oturum açık değil.' };
+  handle('enable-2fa', async (event, code) => {
+    if (!currentUserId || !currentKey) return { success: false, error: 'Oturum açık değil.' };
     if (!pending2FASetupSecret) return { success: false, error: '2FA kurulumu başlatılmadı.' };
 
-    const cleanCode = (code || '').replace(/\s+/g, '');
+    const cleanCode = str(code).replace(/\s+/g, '');
     const isValid = verifyTOTP(pending2FASetupSecret, cleanCode);
 
     if (!isValid) {
@@ -482,9 +684,7 @@ app.whenReady().then(() => {
     }
 
     try {
-      const { encrypt } = require('./encryption.cjs');
-      const encryptedSecret = await encrypt(pending2FASetupSecret, currentPassword);
-      save2FASecret(currentUserId, encryptedSecret);
+      save2FASecret(currentUserId, encryptWithKey(pending2FASetupSecret, currentKey));
       save2FAConfig(currentUserId, true);
       pending2FASetupSecret = null;
       return { success: true };
@@ -493,9 +693,20 @@ app.whenReady().then(() => {
     }
   });
 
-  ipcMain.handle('disable-2fa', (event, masterPassword) => {
-    if (!currentUserId || !currentPassword) return { success: false, error: 'Oturum açık değil.' };
-    if (masterPassword !== currentPassword) {
+  handle('disable-2fa', async (event, masterPassword) => {
+    if (!currentUserId || !currentKey) return { success: false, error: 'Oturum açık değil.' };
+    const userId = currentUserId;
+    const key = currentKey;
+    let passwordOk = false;
+    try {
+      passwordOk = await verifyPassword(masterPassword, key);
+    } catch (e) {
+      passwordOk = false;
+    }
+    if (currentUserId !== userId || currentKey !== key) {
+      return { success: false, error: 'Oturum açık değil.' };
+    }
+    if (!passwordOk) {
       return { success: false, error: 'Ana şifre hatalı.' };
     }
 
@@ -504,66 +715,82 @@ app.whenReady().then(() => {
     return { success: true };
   });
 
-  ipcMain.handle('save-passwords', async (event, passwordsData) => {
-    if (!currentUserId || !currentPassword) throw new Error('Oturum açık değil.');
+  const MAX_VAULT_ITEMS = 20000;
+  const MAX_VAULT_BYTES = 20 * 1024 * 1024;
 
-    const { encrypt } = require('./encryption.cjs');
+  handle('save-passwords', async (event, passwordsData) => {
+    if (!currentUserId || !currentKey) throw new Error('Oturum açık değil.');
+
+    if (!Array.isArray(passwordsData) || passwordsData.length > MAX_VAULT_ITEMS ||
+        passwordsData.some(item => typeof item !== 'object' || item === null || Array.isArray(item))) {
+      throw new Error('Geçersiz kasa verisi.');
+    }
+
     const jsonStr = JSON.stringify(passwordsData);
-    const encryptedBuffer = await encrypt(jsonStr, currentPassword);
-    saveUserEncryptedData(currentUserId, encryptedBuffer);
+    if (Buffer.byteLength(jsonStr, 'utf8') > MAX_VAULT_BYTES) {
+      throw new Error('Kasa verisi çok büyük.');
+    }
+    saveUserEncryptedData(currentUserId, encryptWithKey(jsonStr, currentKey));
     return { success: true };
   });
 
-  ipcMain.handle('change-password', async (event, oldPassword, newPassword) => {
-    if (!currentUserId || !currentPassword) throw new Error('Oturum açık değil.');
+  handle('change-password', async (event, oldPassword, newPassword) => {
+    if (!currentUserId || !currentKey) throw new Error('Oturum açık değil.');
+    const userId = currentUserId;
+    const oldKey = currentKey;
 
-    if (oldPassword !== currentPassword) {
-      return { success: false, error: 'Eski şifre yanlış.' };
+    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+      return { success: false, error: 'Şifre en az 8 karakter olmalıdır.' };
+    }
+    if (newPassword.length > MAX_MASTER_PASSWORD_LENGTH) {
+      return { success: false, error: 'Şifre çok uzun.' };
     }
 
-    const { encrypt, decrypt } = require('./encryption.cjs');
-
     try {
-      const encryptedDataBuffer = readUserEncryptedData(currentUserId);
-      const jsonStr = await decrypt(encryptedDataBuffer, oldPassword);
-      const newEncryptedBuffer = await encrypt(jsonStr, newPassword);
-      saveUserEncryptedData(currentUserId, newEncryptedBuffer);
-
-      // Re-encrypt 2FA secret if enabled
-      if (is2FAEnabled(currentUserId)) {
-        const encryptedSecret = read2FASecret(currentUserId);
-        if (encryptedSecret) {
-          try {
-            const rawSecret = await decrypt(encryptedSecret, oldPassword);
-            const reEncrypted = await encrypt(rawSecret, newPassword);
-            save2FASecret(currentUserId, reEncrypted);
-          } catch (e) {
-            console.error('Error re-encrypting 2FA secret:', e);
-          }
-        }
+      if (!(await verifyPassword(oldPassword, oldKey))) {
+        return { success: false, error: 'Eski şifre yanlış.' };
       }
 
-      currentPassword = newPassword;
+      const newKey = await createKey(newPassword);
+      if (currentUserId !== userId || currentKey !== oldKey) {
+        return { success: false, error: 'Oturum açık değil.' };
+      }
+
+      // Decrypt everything first so nothing is written unless all of it can be re-encrypted.
+      const jsonStr = decryptWithKey(readUserEncryptedData(userId), oldKey);
+      let rawSecret = null;
+      if (is2FAEnabled(userId)) {
+        const encryptedSecret = read2FASecret(userId);
+        if (!encryptedSecret) {
+          return { success: false, error: 'Şifre değiştirme hatası: 2FA verisi okunamadı.' };
+        }
+        rawSecret = decryptWithKey(encryptedSecret, oldKey);
+      }
+
+      saveUserEncryptedData(userId, encryptWithKey(jsonStr, newKey));
+      if (rawSecret !== null) {
+        save2FASecret(userId, encryptWithKey(rawSecret, newKey));
+      }
+
+      currentKey = newKey;
+      oldKey.key.fill(0);
       return { success: true };
     } catch (err) {
-      console.error(err);
+      console.error('Change password error:', err.message);
       return { success: false, error: 'Şifre değiştirme hatası: ' + err.message };
     }
   });
 
-  ipcMain.handle('logout', () => {
-    currentUserId = null;
-    currentPassword = null;
-    pending2FALogin = null;
-    pending2FASetupSecret = null;
+  handle('logout', () => {
+    lockVault(false);
     return true;
   });
 
   // Have I Been Pwned check using k-Anonymity (SHA-1)
-  ipcMain.handle('check-pwned-password', (event, password) => {
+  handle('check-pwned-password', (event, password) => {
     return new Promise((resolve) => {
-      if (!password) {
-        return resolve({ pwned: false, count: 0 });
+      if (typeof password !== 'string' || !password) {
+        return resolve({ pwned: false, count: 0, error: 'Geçersiz istek' });
       }
 
       try {
@@ -583,10 +810,18 @@ app.whenReady().then(() => {
         };
 
         const req = https.request(options, (res) => {
+          // A failed lookup must never be reported as "not breached"
+          if (res.statusCode !== 200) {
+            res.resume();
+            return resolve({ pwned: false, count: 0, error: `Sunucu hatası (${res.statusCode})` });
+          }
           let data = '';
-          res.on('data', chunk => data += chunk);
+          res.on('data', chunk => {
+            data += chunk;
+            if (data.length > 5 * 1024 * 1024) req.destroy(new Error('Yanıt çok büyük'));
+          });
           res.on('end', () => {
-            const lines = data.split('\r\n');
+            const lines = data.split(/\r?\n/);
             let count = 0;
             for (const line of lines) {
               const [hashSuffix, occ] = line.split(':');
@@ -600,7 +835,7 @@ app.whenReady().then(() => {
         });
 
         req.on('error', (err) => {
-          console.error('HIBP request error:', err);
+          console.error('HIBP request error:', err.message);
           resolve({ pwned: false, count: 0, error: 'Bağlantı hatası' });
         });
 
@@ -611,11 +846,11 @@ app.whenReady().then(() => {
 
         req.end();
       } catch (err) {
-        console.error('HIBP exception:', err);
+        console.error('HIBP exception:', err.message);
         resolve({ pwned: false, count: 0, error: err.message });
       }
     });
   });
 
-  ipcMain.handle('get-app-version', () => app.getVersion());
+  handle('get-app-version', () => app.getVersion());
 });

@@ -178,6 +178,9 @@ export const translations = {
         checkBreachBtn: "Sızıntı Kontrolü (HIBP)",
         breachChecking: "Kontrol ediliyor...",
         breachSafe: "Güvendesiniz! Bu şifre hiçbir veri sızıntısında görülmedi.",
+        breachCheckFailed: "Sızıntı kontrolü yapılamadı. İnternet bağlantınızı kontrol edip tekrar deneyin.",
+        statsScanIncomplete: "{count} şifre kontrol edilemedi (bağlantı hatası). Sonuçlar eksik olabilir.",
+        autoLocked: "Kasa güvenlik nedeniyle otomatik olarak kilitlendi.",
         breachWarning: "DİKKAT: Bu şifre bilinen veri ihlallerinde {count} kez görüldü! Hemen değiştirin.",
         // Account 2FA
         twoFactorTitle: "İki Faktörlü Doğrulama (2FA)",
@@ -379,6 +382,9 @@ export const translations = {
         checkBreachBtn: "Breach Check (HIBP)",
         breachChecking: "Checking...",
         breachSafe: "Safe! This password was not found in any data breach.",
+        breachCheckFailed: "Breach check failed. Check your internet connection and try again.",
+        statsScanIncomplete: "{count} passwords could not be checked (connection error). Results may be incomplete.",
+        autoLocked: "The vault was locked automatically for your security.",
         breachWarning: "WARNING: This password was seen {count} times in breaches! Change it immediately.",
         // Account 2FA
         twoFactorTitle: "Two-Factor Authentication (2FA)",

@@ -81,17 +81,19 @@ function generateCodeForCounter(secret, counter, digits = 6) {
  * @returns {boolean} True if the code is valid
  */
 function verifyTOTP(secret, code, windowSize = 1) {
+    if (typeof secret !== 'string' || typeof code !== 'string' || !/^\d{6}$/.test(code)) return false;
     const period = 30;
     const epoch = Math.floor(Date.now() / 1000);
     const currentCounter = Math.floor(epoch / period);
+    let valid = false;
 
     for (let i = -windowSize; i <= windowSize; i++) {
         const counter = currentCounter + i;
         const expected = generateCodeForCounter(secret, counter);
-        if (expected === code) return true;
+        if (crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(code))) valid = true;
     }
 
-    return false;
+    return valid;
 }
 
 module.exports = { generateSecret, verifyTOTP, base32Encode, base32Decode };
