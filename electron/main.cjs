@@ -145,6 +145,11 @@ function createWindow() {
   }
 }
 
+// A release build must not be startable with a debugger attached to the unlocked vault.
+if (app.isPackaged && process.argv.some(arg => /^--(remote-debugging-|inspect)/.test(arg))) {
+  app.exit(1);
+}
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
