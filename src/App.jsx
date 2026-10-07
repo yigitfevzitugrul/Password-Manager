@@ -3,6 +3,7 @@ import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 
 import { translations } from './translations';
+import { TRASH_RETENTION_MS } from './utils/trash';
 
 // Lock the vault after this much time without any user input
 const AUTO_LOCK_MS = 5 * 60 * 1000;
@@ -74,7 +75,13 @@ function App() {
 
     const handleLogin = (data, user) => {
         setLockNotice(false);
-        setPasswords(data || []);
+
+        const cutoff = Date.now() - TRASH_RETENTION_MS;
+        const items = (data || []).filter(item => !item.deletedAt || item.deletedAt > cutoff);
+        if (items.length !== (data || []).length) {
+            window.electronAPI.savePasswords(items).catch(() => {});
+        }
+        setPasswords(items);
         setCurrentUser(user || null);
         setIsAuthenticated(true);
     };

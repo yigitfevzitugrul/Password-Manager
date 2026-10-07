@@ -7,6 +7,10 @@ import VaultStats from './VaultStats';
 import TotpDisplay from './TotpDisplay';
 import { isValidBase32 } from '../utils/totp';
 import { calculatePasswordStrength } from '../utils/passwordStrength';
+import { TRASH_RETENTION_MS } from '../utils/trash';
+
+// Previous passwords kept per entry
+const MAX_PASSWORD_HISTORY = 10;
 
 // --- SVG Icons ---
 const KeyIcon = () => (
@@ -127,6 +131,12 @@ const GripIcon = () => (
         <circle cx="15" cy="18" r="1.5" />
     </svg>
 );
+const RestoreIcon = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="1 4 1 10 7 10" />
+        <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+    </svg>
+);
 const ShieldAlertIcon = () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -164,7 +174,9 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
     const [searchTerm, setSearchTerm] = useState('');
     const [showModal, setShowModal] = useState(false);
     const [editingItem, setEditingItem] = useState(null);
-    const [activeTab, setActiveTab] = useState('passwords'); // 'passwords', 'generator', 'stats', 'account'
+    const [activeTab, setActiveTab] = useState('passwords'); // 'passwords', 'trash', 'generator', 'stats', 'account'
+    const [purgeTarget, setPurgeTarget] = useState(null); // trashed item, or 'all'
+    const [showHistory, setShowHistory] = useState(false);
     const [deleteItem, setDeleteItem] = useState(null);
     const [isViewMode, setIsViewMode] = useState(false);
     const [toast, setToast] = useState({ show: false, message: '' });
@@ -203,7 +215,16 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
         isFavorite: false
     });
 
-    const passwords = data || [];
+    // Trashed entries stay in the vault (marked with deletedAt) but are hidden everywhere except the trash
+    const allItems = data || [];
+    const passwords = React.useMemo(() => allItems.filter(p => !p.deletedAt), [allItems]);
+    const trash = React.useMemo(
+        () => allItems.filter(p => p.deletedAt).sort((a, b) => b.deletedAt - a.deletedAt),
+        [allItems]
+    );
+
+    // Saves a new list of active entries without touching the trash
+    const saveActive = (activeList) => onSave([...activeList, ...trash]);
 
     // Save sort preference
     const handleSortChange = (newSort) => {
@@ -229,7 +250,7 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
         const updated = passwords.map(p =>
             p.id === item.id ? { ...p, isFavorite: !p.isFavorite } : p
         );
-        onSave(updated);
+        saveActive(updated);
         showToast(!item.isFavorite ? texts.favAdded : texts.favRemoved);
     };
 
@@ -341,7 +362,7 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
         const [movedItem] = newOrder.splice(draggedItemIndex, 1);
         newOrder.splice(targetIndex, 0, movedItem);
 
-        onSave(newOrder);
+        saveActive(newOrder);
         setDraggedItemIndex(null);
         setDragOverIndex(null);
         showToast('Sıralama güncellendi.');
@@ -355,6 +376,7 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
     const openModal = (item = null, viewMode = false) => {
         setIsViewMode(viewMode);
         setShowPasswordField(false);
+        setShowHistory(false);
         setBreachResult(null);
         if (item) {
             setEditingItem(item);
@@ -400,15 +422,23 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
         let newData;
         const now = Date.now();
         if (editingItem) {
+            // Keep the replaced password so an accidental change can be undone
+            let passwordHistory = editingItem.passwordHistory || [];
+            if (editingItem.password && editingItem.password !== formData.password) {
+                passwordHistory = [
+                    { password: editingItem.password, changedAt: now },
+                    ...passwordHistory
+                ].slice(0, MAX_PASSWORD_HISTORY);
+            }
             newData = passwords.map(p =>
                 p.id === editingItem.id
-                    ? { ...formData, id: editingItem.id, createdAt: editingItem.createdAt || now, updatedAt: now }
+                    ? { ...p, ...formData, id: editingItem.id, createdAt: editingItem.createdAt || now, updatedAt: now, passwordHistory }
                     : p
             );
         } else {
             newData = [...passwords, { ...formData, id: uuidv4(), createdAt: now, updatedAt: now }];
         }
-        onSave(newData);
+        saveActive(newData);
         showToast(texts.savedSuccess || 'Şifre başarıyla kaydedildi.');
         closeModal();
     };
@@ -417,14 +447,39 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
         setDeleteItem(item);
     };
 
+    // Deleting moves the entry to the trash
     const handleDelete = () => {
         if (deleteItem) {
-            const newData = passwords.filter(p => p.id !== deleteItem.id);
-            onSave(newData);
-            showToast(texts.deletedSuccess || 'Şifre silindi.');
+            onSave(allItems.map(p => p.id === deleteItem.id ? { ...p, deletedAt: Date.now() } : p));
+            showToast(texts.movedToTrash);
             closeModal();
         }
     };
+
+    const handleRestoreFromTrash = (item) => {
+        onSave(allItems.map(p => {
+            if (p.id !== item.id) return p;
+            const { deletedAt, ...restored } = p;
+            return restored;
+        }));
+        showToast(texts.trashRestored);
+    };
+
+    // Permanent removal of one trashed entry, or of the whole trash
+    const handlePurge = () => {
+        if (!purgeTarget) return;
+        onSave(purgeTarget === 'all'
+            ? passwords
+            : allItems.filter(p => p.id !== purgeTarget.id));
+        showToast(texts.trashPurged);
+        setPurgeTarget(null);
+    };
+
+    const getTrashDaysLeft = (item) =>
+        Math.max(1, Math.ceil((item.deletedAt + TRASH_RETENTION_MS - Date.now()) / (24 * 60 * 60 * 1000)));
+
+    const formatDate = (timestamp) =>
+        new Date(timestamp).toLocaleString(lang === 'tr' ? 'tr-TR' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' });
 
     const copyToClipboard = (text, label) => {
         if (!text) return;
@@ -523,6 +578,15 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
                         <StarIcon filled={showOnlyFavorites} />
                         {texts.navFavorites}
                         <span className="menu-badge">{favoritesCount}</span>
+                    </button>
+
+                    <button
+                        className={`menu-item ${activeTab === 'trash' ? 'active' : ''}`}
+                        onClick={() => setActiveTab('trash')}
+                    >
+                        <TrashIcon />
+                        {texts.navTrash}
+                        <span className="menu-badge">{trash.length}</span>
                     </button>
 
                     {/* Option 13: Vault Stats Sidebar Link */}
@@ -769,6 +833,60 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
                     </>
                 )}
 
+                {/* TRASH TAB */}
+                {activeTab === 'trash' && (
+                    <>
+                        <header className="top-bar">
+                            <div className="trash-header-text">
+                                <h2>{texts.navTrash}</h2>
+                                <p>{texts.trashDesc}</p>
+                            </div>
+                            <button
+                                className="btn-danger"
+                                onClick={() => setPurgeTarget('all')}
+                                disabled={trash.length === 0}
+                                style={{ width: 'auto' }}
+                            >
+                                {texts.trashEmptyBtn}
+                            </button>
+                        </header>
+
+                        <div className="password-list">
+                            {trash.length === 0 ? (
+                                <div className="empty-state">
+                                    <TrashIcon />
+                                    <p>{texts.trashEmpty}</p>
+                                </div>
+                            ) : (
+                                trash.map(item => (
+                                    <div key={item.id} className="password-item">
+                                        <div className="clickable-area" style={{ cursor: 'default' }}>
+                                            <div className="item-avatar">{getInitials(item.title)}</div>
+                                            <div className="item-info">
+                                                <div className="item-title-row">
+                                                    <h4>{item.title}</h4>
+                                                    <span className="category-pill">
+                                                        {texts.trashDaysLeft.replace('{days}', getTrashDaysLeft(item))}
+                                                    </span>
+                                                </div>
+                                                <span>{item.username || '-'}</span>
+                                            </div>
+                                        </div>
+                                        <div className="item-actions">
+                                            <button className="btn-icon" onClick={() => handleRestoreFromTrash(item)} title={texts.trashRestoreBtn}>
+                                                <RestoreIcon />
+                                            </button>
+                                            <button className="btn-icon-danger" onClick={() => setPurgeTarget(item)} title={texts.trashDeleteForeverBtn}>
+                                                <TrashIcon />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </>
+                )}
+
                 {/* Option 13: Dashboard Statistics / Vault Health Tab */}
                 {activeTab === 'stats' && (
                     <VaultStats
@@ -785,7 +903,8 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
                     <AccountSettings
                         currentUser={currentUser}
                         passwords={passwords}
-                        onSave={onSave}
+                        onSave={saveActive}
+                        onReplaceAll={onSave}
                         theme={theme}
                         toggleTheme={toggleTheme}
                         lang={lang}
@@ -971,6 +1090,34 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
                             )}
                         </div>
 
+                        {/* Password History (previous passwords of this entry) */}
+                        {isViewMode && editingItem?.passwordHistory?.length > 0 && (
+                            <div className="input-group">
+                                <button type="button" className="btn-ghost" onClick={() => setShowHistory(!showHistory)} style={{ fontSize: '0.8rem', padding: '4px 10px' }}>
+                                    {texts.historyTitle} ({editingItem.passwordHistory.length})
+                                </button>
+                                {showHistory && (
+                                    <div className="password-history-list">
+                                        {editingItem.passwordHistory.map((entry, idx) => (
+                                            <div key={idx} className="password-history-row">
+                                                <code>{showPasswordField ? entry.password : '••••••••••'}</code>
+                                                <span className="sub">{formatDate(entry.changedAt)}</span>
+                                                <button
+                                                    type="button"
+                                                    className="btn-icon"
+                                                    onClick={() => copyToClipboard(entry.password, texts.copiedPassword)}
+                                                    title={texts.genCopy}
+                                                >
+                                                    <CopyIcon />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        <p className="sub">{texts.historyHint}</p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
                         {/* TOTP 2FA Key Field */}
                         <div className="input-group">
                             <label className="input-label">{texts.totpSecret}</label>
@@ -1036,11 +1183,29 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
                 <Modal title={texts.confirmDeleteTitle} onClose={closeModal}>
                     <div className="modal-delete-warning">
                         <p>{texts.confirmDeleteMsgStart}{deleteItem.title}{texts.confirmDeleteMsgEnd}</p>
-                        <p className="sub-text">{texts.irreversibleAction}</p>
+                        <p className="sub-text">{texts.deleteToTrashHint}</p>
                     </div>
                     <div className="modal-actions">
                         <button className="btn-danger" onClick={handleDelete}>{texts.btnDelete}</button>
                         <button className="btn-ghost" onClick={closeModal}>{texts.btnCancel}</button>
+                    </div>
+                </Modal>
+            )}
+
+            {/* CONFIRM PERMANENT DELETE MODAL */}
+            {purgeTarget && (
+                <Modal title={texts.confirmDeleteTitle} onClose={() => setPurgeTarget(null)}>
+                    <div className="modal-delete-warning">
+                        <p>
+                            {purgeTarget === 'all'
+                                ? texts.trashEmptyConfirm.replace('{count}', trash.length)
+                                : `${texts.confirmDeleteMsgStart}${purgeTarget.title}${texts.trashDeleteForeverConfirm}`}
+                        </p>
+                        <p className="sub-text">{texts.irreversibleAction}</p>
+                    </div>
+                    <div className="modal-actions">
+                        <button className="btn-danger" onClick={handlePurge}>{texts.trashDeleteForeverBtn}</button>
+                        <button className="btn-ghost" onClick={() => setPurgeTarget(null)}>{texts.btnCancel}</button>
                     </div>
                 </Modal>
             )}

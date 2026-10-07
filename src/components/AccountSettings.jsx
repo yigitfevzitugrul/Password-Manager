@@ -65,7 +65,7 @@ const CopyIcon = () => (
     </svg>
 );
 
-function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleTheme, lang, setLang, texts }) {
+function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, theme, toggleTheme, lang, setLang, texts }) {
     // Password Change State
     const [oldPassword, setOldPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
@@ -454,11 +454,12 @@ function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleThe
     const handleRestoreBackup = (replace) => {
         if (!backupPreview || backupPreview.length === 0) return;
 
-        const restored = replace
-            ? backupPreview.map(item => ({ ...item, id: item.id || uuidv4() }))
-            : [...passwords, ...backupPreview.map(item => ({ ...item, id: uuidv4() }))];
-        if (onSave) {
-            onSave(restored);
+        if (replace) {
+            // The backup becomes the whole vault, including its own trash
+            (onReplaceAll || onSave)(backupPreview.map(item => ({ ...item, id: item.id || uuidv4() })));
+        } else {
+            const added = backupPreview.filter(item => !item.deletedAt).map(item => ({ ...item, id: uuidv4() }));
+            onSave([...passwords, ...added]);
         }
 
         setImportMsg({
