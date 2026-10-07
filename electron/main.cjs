@@ -205,25 +205,32 @@ app.whenReady().then(() => {
   let clipboardSecret = null;
   let clipboardTimer = null;
 
+  let clipboardClearing = Promise.resolve();
+
+  // The clipboard API is asynchronous (Electron 40+), so clearing returns a promise.
+  // It is only cleared when it still holds what this app put there.
   function clearClipboardIfOurs() {
     if (clipboardTimer) {
       clearTimeout(clipboardTimer);
       clipboardTimer = null;
     }
     if (clipboardSecret !== null) {
-      try {
-        if (clipboard.readText() === clipboardSecret) clipboard.clear();
-      } catch (e) {
-        console.error('Clipboard clear error:', e.message);
-      }
+      const secret = clipboardSecret;
       clipboardSecret = null;
+      clipboardClearing = clipboardClearing
+        .then(() => clipboard.readText())
+        .then(current => {
+          if (current === secret) clipboard.clear();
+        })
+        .catch(e => console.error('Clipboard clear error:', e.message));
     }
+    return clipboardClearing;
   }
 
-  handle('copy-to-clipboard', (event, text) => {
+  handle('copy-to-clipboard', async (event, text) => {
     if (typeof text !== 'string' || text.length === 0 || text.length > 100000) return false;
-    clearClipboardIfOurs();
-    clipboard.writeText(text);
+    await clearClipboardIfOurs();
+    await clipboard.writeText(text);
     clipboardSecret = text;
     clipboardTimer = setTimeout(clearClipboardIfOurs, CLIPBOARD_CLEAR_MS);
     return true;
@@ -374,7 +381,18 @@ app.whenReady().then(() => {
 
   powerMonitor.on('lock-screen', () => softLock(true));
   powerMonitor.on('suspend', () => softLock(true));
-  app.on('before-quit', () => lockVault(false));
+  // Quitting waits for the clipboard to be cleared
+  let clipboardClearedForQuit = false;
+  app.on('before-quit', (event) => {
+    lockVault(false);
+    if (!clipboardClearedForQuit) {
+      event.preventDefault();
+      clipboardClearing.finally(() => {
+        clipboardClearedForQuit = true;
+        app.quit();
+      });
+    }
+  });
 
   // --- Login Attempt Limiting ---
   let loginAttempts = 0;
