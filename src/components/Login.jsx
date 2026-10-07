@@ -445,7 +445,7 @@ function Login({ onLogin, texts, notice }) {
                     ) : (
                         <>
                             <img
-                                src="/icon.png"
+                                src="./icon.png"
                                 alt="Logo"
                                 className="login-app-logo"
                                 onError={(e) => {

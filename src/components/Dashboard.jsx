@@ -458,7 +458,7 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
                 <div className="sidebar-header">
                     <div className="sidebar-logo">
                         <img
-                            src="/icon.png"
+                            src="./icon.png"
                             alt="Logo"
                             className="sidebar-app-logo"
                             onError={(e) => {
