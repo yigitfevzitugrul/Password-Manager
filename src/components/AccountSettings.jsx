@@ -91,6 +91,15 @@ function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleThe
     const [keyFileMsg, setKeyFileMsg] = useState({ type: '', msg: '' });
     const [keyFileBusy, setKeyFileBusy] = useState(false);
 
+    // Quick Unlock PIN State
+    const [quickPinEnabled, setQuickPinEnabled] = useState(false);
+    const [showQuickPinForm, setShowQuickPinForm] = useState(false);
+    const [quickPinPassword, setQuickPinPassword] = useState('');
+    const [quickPinValue, setQuickPinValue] = useState('');
+    const [quickPinConfirm, setQuickPinConfirm] = useState('');
+    const [quickPinMsg, setQuickPinMsg] = useState({ type: '', msg: '' });
+    const [quickPinBusy, setQuickPinBusy] = useState(false);
+
     // Import State
     const fileInputRef = useRef(null);
     const [importPreview, setImportPreview] = useState(null);
@@ -137,6 +146,9 @@ function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleThe
         }
         refreshAutoBackups();
         refreshKeyFileStatus();
+        if (window.electronAPI && window.electronAPI.getQuickPinStatus) {
+            window.electronAPI.getQuickPinStatus().then(res => setQuickPinEnabled(res.enabled)).catch(() => {});
+        }
     }, []);
 
     // Change Master Password
@@ -250,6 +262,54 @@ function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleThe
             setKeyFileMsg({ type: 'error', msg: err.message });
         } finally {
             setKeyFileBusy(false);
+        }
+    };
+
+    // Quick Unlock PIN: Set
+    const handleSetQuickPin = async (e) => {
+        e.preventDefault();
+        if (quickPinValue.length < 4) {
+            setQuickPinMsg({ type: 'error', msg: texts.quickPinTooShort });
+            return;
+        }
+        if (quickPinValue !== quickPinConfirm) {
+            setQuickPinMsg({ type: 'error', msg: texts.quickPinMismatch });
+            return;
+        }
+
+        setQuickPinBusy(true);
+        setQuickPinMsg({ type: '', msg: '' });
+        try {
+            const res = await window.electronAPI.setQuickPin(quickPinPassword, quickPinValue);
+            if (res.success) {
+                setQuickPinEnabled(true);
+                setShowQuickPinForm(false);
+                setQuickPinPassword('');
+                setQuickPinValue('');
+                setQuickPinConfirm('');
+                setQuickPinMsg({ type: 'success', msg: texts.quickPinEnabledSuccess });
+            } else {
+                setQuickPinMsg({ type: 'error', msg: res.error });
+            }
+        } catch (err) {
+            setQuickPinMsg({ type: 'error', msg: err.message });
+        } finally {
+            setQuickPinBusy(false);
+        }
+    };
+
+    // Quick Unlock PIN: Remove
+    const handleDisableQuickPin = async () => {
+        try {
+            const res = await window.electronAPI.disableQuickPin();
+            if (res.success) {
+                setQuickPinEnabled(false);
+                setQuickPinMsg({ type: 'success', msg: texts.quickPinDisabledSuccess });
+            } else {
+                setQuickPinMsg({ type: 'error', msg: res.error });
+            }
+        } catch (err) {
+            setQuickPinMsg({ type: 'error', msg: err.message });
         }
     };
 
@@ -603,6 +663,95 @@ function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleThe
                                 onClick={() => {
                                     setShowKeyFilePrompt(false);
                                     setKeyFilePassword('');
+                                }}
+                            >
+                                {texts.btnCancel}
+                            </button>
+                        </div>
+                    </form>
+                )}
+            </div>
+
+            {/* QUICK UNLOCK PIN SECTION */}
+            <div className="settings-section">
+                <div className="section-title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3><LockIcon /> {texts.quickPinTitle}</h3>
+                    <span className={`badge ${quickPinEnabled ? 'badge-success' : 'badge-muted'}`}>
+                        {quickPinEnabled ? texts.keyFileEnabledBadge : texts.keyFileDisabledBadge}
+                    </span>
+                </div>
+                <p className="section-subtitle">{texts.quickPinDesc}</p>
+
+                {quickPinMsg.msg && (
+                    <div className={`status-message ${quickPinMsg.type}`}>
+                        {quickPinMsg.msg}
+                    </div>
+                )}
+
+                {!showQuickPinForm ? (
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                        <button
+                            className="btn-primary"
+                            onClick={() => {
+                                setShowQuickPinForm(true);
+                                setQuickPinMsg({ type: '', msg: '' });
+                            }}
+                            style={{ width: 'auto' }}
+                        >
+                            {quickPinEnabled ? texts.quickPinChangeBtn : texts.quickPinEnableBtn}
+                        </button>
+                        {quickPinEnabled && (
+                            <button className="btn-danger" onClick={handleDisableQuickPin} style={{ width: 'auto' }}>
+                                {texts.quickPinDisableBtn}
+                            </button>
+                        )}
+                    </div>
+                ) : (
+                    <form onSubmit={handleSetQuickPin}>
+                        <div className="input-group">
+                            <label className="input-label">{texts.masterPassword}</label>
+                            <input
+                                type="password"
+                                value={quickPinPassword}
+                                onChange={e => setQuickPinPassword(e.target.value)}
+                                autoFocus
+                                required
+                            />
+                        </div>
+                        <div className="input-group">
+                            <label className="input-label">{texts.quickPinLabel}</label>
+                            <input
+                                type="password"
+                                inputMode="numeric"
+                                maxLength="12"
+                                value={quickPinValue}
+                                onChange={e => setQuickPinValue(e.target.value.replace(/[^0-9]/g, ''))}
+                                required
+                            />
+                        </div>
+                        <div className="input-group">
+                            <label className="input-label">{texts.quickPinConfirmLabel}</label>
+                            <input
+                                type="password"
+                                inputMode="numeric"
+                                maxLength="12"
+                                value={quickPinConfirm}
+                                onChange={e => setQuickPinConfirm(e.target.value.replace(/[^0-9]/g, ''))}
+                                required
+                            />
+                        </div>
+                        <div style={{ display: 'flex', gap: '8px', marginTop: '0.75rem' }}>
+                            <button type="submit" className="btn-primary" disabled={quickPinBusy} style={{ width: 'auto' }}>
+                                {quickPinBusy ? texts.updating : texts.quickPinSaveBtn}
+                            </button>
+                            <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={() => {
+                                    setShowQuickPinForm(false);
+                                    setQuickPinPassword('');
+                                    setQuickPinValue('');
+                                    setQuickPinConfirm('');
                                 }}
                             >
                                 {texts.btnCancel}

@@ -95,6 +95,10 @@ function Login({ onLogin, texts, notice }) {
     const [is2FAStep, setIs2FAStep] = useState(false);
     const [twoFACode, setTwoFACode] = useState('');
 
+    // Quick unlock with PIN after an automatic lock
+    const [quickUnlock, setQuickUnlock] = useState(null);
+    const [quickPin, setQuickPin] = useState('');
+
     // Key file (accounts whose vault key also depends on a key file)
     const [keyFileRequired, setKeyFileRequired] = useState(false);
     const [keyFileName, setKeyFileName] = useState('');
@@ -129,6 +133,12 @@ function Login({ onLogin, texts, notice }) {
 
     useEffect(() => {
         loadUsers();
+
+        if (window.electronAPI && window.electronAPI.getQuickUnlockState) {
+            window.electronAPI.getQuickUnlockState().then(state => {
+                if (state.available) setQuickUnlock(state);
+            }).catch(() => {});
+        }
 
         // Check for active lockout
         if (window.electronAPI && window.electronAPI.checkLockout) {
@@ -223,6 +233,33 @@ function Login({ onLogin, texts, notice }) {
                     startLockoutCountdown(res.remainingSeconds);
                 } else if (res.attemptsRemaining !== undefined) {
                     setAttemptsRemaining(res.attemptsRemaining);
+                }
+            }
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    // --- QUICK UNLOCK (PIN) ---
+    const handleQuickUnlock = async (e) => {
+        e.preventDefault();
+        if (!window.electronAPI || quickPin.length < 4) return;
+
+        setLoading(true);
+        setError('');
+
+        try {
+            const res = await window.electronAPI.quickUnlock(quickPin);
+            if (res.success) {
+                onLogin(res.data, res.user);
+            } else {
+                setQuickPin('');
+                setError(res.error || 'Hatalı PIN.');
+                if (res.expired) {
+                    setSelectedUserId(quickUnlock.userId);
+                    setQuickUnlock(null);
                 }
             }
         } catch (err) {
@@ -380,8 +417,49 @@ function Login({ onLogin, texts, notice }) {
                     )}
                 </div>
 
-                {/* 2FA PROMPT SCREEN (FOR LOGGING IN USERS WHO HAVE 2FA ENABLED) */}
-                {is2FAStep ? (
+                {/* QUICK UNLOCK SCREEN (AFTER AN AUTOMATIC LOCK, FOR USERS WITH A PIN) */}
+                {quickUnlock && !is2FAStep && !isRegisterMode ? (
+                    <div>
+                        <h2>{texts.quickUnlockTitle}</h2>
+                        <p><strong>{quickUnlock.username}</strong> — {texts.quickUnlockDesc}</p>
+
+                        <form onSubmit={handleQuickUnlock}>
+                            <div className="input-group">
+                                <input
+                                    type="password"
+                                    inputMode="numeric"
+                                    maxLength="12"
+                                    placeholder=""
+                                    value={quickPin}
+                                    onChange={e => setQuickPin(e.target.value.replace(/[^0-9]/g, ''))}
+                                    autoFocus
+                                    className="twofa-login-input"
+                                    required
+                                />
+                            </div>
+
+                            {error && <div className="error-message">{error}</div>}
+
+                            <button type="submit" disabled={loading || quickPin.length < 4} className="btn-primary">
+                                {loading ? texts.updating : texts.quickUnlockBtn}
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setSelectedUserId(quickUnlock.userId);
+                                    setQuickUnlock(null);
+                                    setQuickPin('');
+                                    setError('');
+                                }}
+                                className="btn-secondary"
+                                style={{ marginTop: '0.75rem', width: '100%' }}
+                            >
+                                {texts.quickUnlockUsePassword}
+                            </button>
+                        </form>
+                    </div>
+                ) : is2FAStep ? (
                     <div>
                         <h2>{texts.twoFactorPromptTitle}</h2>
                         <p>{texts.twoFactorPromptDesc}</p>

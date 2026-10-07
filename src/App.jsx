@@ -52,7 +52,7 @@ function App() {
         let timer = null;
         const lock = async () => {
             try {
-                await window.electronAPI.logout();
+                await window.electronAPI.autoLock();
             } finally {
                 clearSession();
                 setLockNotice(true);

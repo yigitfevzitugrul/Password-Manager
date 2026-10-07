@@ -12,7 +12,9 @@ const {
   readUserEncryptedData,
   checkUserVaultExists,
   setLastActiveUser,
-  setUserKeyFilePath
+  setUserKeyFilePath,
+  writeFileAtomic,
+  isValidUserId
 } = require('./fileSystem.cjs');
 const { is2FAEnabled, save2FAConfig, save2FASecret, read2FASecret, remove2FAData } = require('./twoFactorAuth.cjs');
 const { generateSecret, verifyTOTP } = require('./totp.cjs');
@@ -241,14 +243,137 @@ app.whenReady().then(() => {
     pending2FALogin = null;
     pending2FASetupSecret = null;
     pendingBackup = null;
+    quickPin = null;
+    dropSuspended();
     clearClipboardIfOurs();
     if (notifyRenderer && wasUnlocked && win && !win.isDestroyed()) {
       win.webContents.send('vault-locked');
     }
   }
 
-  powerMonitor.on('lock-screen', () => lockVault(true));
-  powerMonitor.on('suspend', () => lockVault(true));
+  // --- Quick unlock PIN ---
+  // The PIN never decrypts anything. After an automatic lock the key stays in memory ("suspended")
+  // and the PIN only releases it; closing the app or too many wrong PINs require the master password.
+  const QUICK_UNLOCK_MAX_ATTEMPTS = 3;
+  const QUICK_UNLOCK_MAX_AGE_MS = 8 * 60 * 60 * 1000;
+  let quickPin = null; // { salt, hash } of the unlocked account's PIN, null when not set
+  let suspended = null; // { userId, username, keyMaterial, pin, attempts, timer }
+
+  function getQuickPinPath(userId) {
+    if (!isValidUserId(userId)) throw new Error('Geçersiz kullanıcı.');
+    return path.join(app.getPath('userData'), `quickpin_${userId}.enc`);
+  }
+
+  function hashPin(pin, salt) {
+    return crypto.scryptSync(pin, salt, 32);
+  }
+
+  // The PIN hash is stored encrypted with the vault key, so it is unreadable while locked
+  function loadQuickPin() {
+    quickPin = null;
+    try {
+      const file = getQuickPinPath(currentUserId);
+      if (!fs.existsSync(file)) return;
+      const parsed = JSON.parse(decryptWithKey(fs.readFileSync(file), currentKey));
+      quickPin = { salt: Buffer.from(parsed.salt, 'base64'), hash: Buffer.from(parsed.hash, 'base64') };
+    } catch (e) {
+      quickPin = null;
+    }
+  }
+
+  function saveQuickPin() {
+    const payload = JSON.stringify({
+      salt: quickPin.salt.toString('base64'),
+      hash: quickPin.hash.toString('base64')
+    });
+    writeFileAtomic(getQuickPinPath(currentUserId), encryptWithKey(payload, currentKey));
+  }
+
+  function dropSuspended() {
+    if (!suspended) return;
+    clearTimeout(suspended.timer);
+    wipeKey(suspended.keyMaterial);
+    suspended = null;
+  }
+
+  // Automatic lock: with a quick unlock PIN the session is suspended, otherwise fully locked
+  function softLock(notifyRenderer) {
+    if (!currentUserId || !currentKey || !quickPin) {
+      lockVault(notifyRenderer);
+      return false;
+    }
+
+    const user = getUsersList().users.find(u => u.id === currentUserId);
+    dropSuspended();
+    suspended = {
+      userId: currentUserId,
+      username: user ? user.username : '',
+      keyMaterial: currentKey,
+      pin: quickPin,
+      attempts: 0,
+      timer: setTimeout(dropSuspended, QUICK_UNLOCK_MAX_AGE_MS)
+    };
+
+    currentUserId = null;
+    currentKey = null;
+    quickPin = null;
+    pending2FASetupSecret = null;
+    pendingBackup = null;
+    clearClipboardIfOurs();
+    if (notifyRenderer && win && !win.isDestroyed()) {
+      win.webContents.send('vault-locked');
+    }
+    return true;
+  }
+
+  handle('auto-lock', () => ({ quickUnlock: softLock(false) }));
+
+  handle('get-quick-unlock-state', () => {
+    if (!suspended) return { available: false };
+    return { available: true, userId: suspended.userId, username: suspended.username };
+  });
+
+  handle('quick-unlock', (event, pin) => {
+    if (!suspended) {
+      return { success: false, expired: true, error: 'Hızlı açma süresi doldu. Ana şifrenizle giriş yapın.' };
+    }
+
+    const candidate = hashPin(typeof pin === 'string' ? pin : '', suspended.pin.salt);
+    if (!crypto.timingSafeEqual(candidate, suspended.pin.hash)) {
+      suspended.attempts++;
+      if (suspended.attempts >= QUICK_UNLOCK_MAX_ATTEMPTS) {
+        dropSuspended();
+        return { success: false, expired: true, error: 'Çok fazla hatalı PIN. Ana şifrenizle giriş yapın.' };
+      }
+      return {
+        success: false,
+        attemptsRemaining: QUICK_UNLOCK_MAX_ATTEMPTS - suspended.attempts,
+        error: 'Hatalı PIN.'
+      };
+    }
+
+    try {
+      let data = JSON.parse(decryptWithKey(readUserEncryptedData(suspended.userId), suspended.keyMaterial));
+      if (!Array.isArray(data)) data = [];
+
+      const resumed = suspended;
+      clearTimeout(resumed.timer);
+      suspended = null;
+      lockVault(false);
+
+      currentUserId = resumed.userId;
+      currentKey = resumed.keyMaterial;
+      quickPin = resumed.pin;
+      return { success: true, data, user: { id: resumed.userId, username: resumed.username } };
+    } catch (err) {
+      console.error('Quick unlock error:', err.message);
+      dropSuspended();
+      return { success: false, expired: true, error: 'Kasa açılamadı. Ana şifrenizle giriş yapın.' };
+    }
+  });
+
+  powerMonitor.on('lock-screen', () => softLock(true));
+  powerMonitor.on('suspend', () => softLock(true));
   app.on('before-quit', () => lockVault(false));
 
   // --- Login Attempt Limiting ---
@@ -537,6 +662,7 @@ app.whenReady().then(() => {
 
       currentUserId = userId;
       currentKey = keyMaterial;
+      loadQuickPin();
       setLastActiveUser(userId);
       loginAttempts = 0;
       lockoutUntil = 0;
@@ -565,6 +691,7 @@ app.whenReady().then(() => {
     if (isValid) {
       currentUserId = pending2FALogin.userId;
       currentKey = pending2FALogin.keyMaterial;
+      loadQuickPin();
       setLastActiveUser(currentUserId);
       const data = pending2FALogin.decryptedData;
       const user = { id: pending2FALogin.userId, username: pending2FALogin.username };
@@ -721,6 +848,7 @@ app.whenReady().then(() => {
 
     currentKey = newKey;
     wipeKey(oldKey);
+    if (quickPin) saveQuickPin();
   }
 
   handle('change-password', async (event, oldPassword, newPassword) => {
@@ -860,6 +988,40 @@ app.whenReady().then(() => {
       console.error('Disable key file error:', err.message);
       return { success: false, error: 'Anahtar dosyası kapatılamadı: ' + err.message };
     }
+  });
+
+  handle('get-quick-pin-status', () => ({ enabled: Boolean(currentUserId && currentKey && quickPin) }));
+
+  handle('set-quick-pin', async (event, masterPassword, pin) => {
+    if (!currentUserId || !currentKey) return { success: false, error: 'Oturum açık değil.' };
+    if (typeof pin !== 'string' || !/^\d{4,12}$/.test(pin)) {
+      return { success: false, error: 'PIN 4 ile 12 hane arasında, yalnızca rakamlardan oluşmalıdır.' };
+    }
+
+    const confirmed = await confirmMasterPassword(masterPassword);
+    if (confirmed.error) return { success: false, error: confirmed.error };
+
+    try {
+      const salt = crypto.randomBytes(16);
+      quickPin = { salt, hash: hashPin(pin, salt) };
+      saveQuickPin();
+      return { success: true };
+    } catch (err) {
+      quickPin = null;
+      return { success: false, error: 'PIN kaydedilemedi: ' + err.message };
+    }
+  });
+
+  handle('disable-quick-pin', () => {
+    if (!currentUserId || !currentKey) return { success: false, error: 'Oturum açık değil.' };
+    try {
+      const file = getQuickPinPath(currentUserId);
+      if (fs.existsSync(file)) fs.unlinkSync(file);
+    } catch (err) {
+      return { success: false, error: 'PIN kaldırılamadı: ' + err.message };
+    }
+    quickPin = null;
+    return { success: true };
   });
 
   // --- Encrypted backups ---
