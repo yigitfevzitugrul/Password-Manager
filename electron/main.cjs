@@ -198,10 +198,12 @@ app.whenReady().then(() => {
   // Key file picked on the login screen, waiting for the next login attempt: { userId, secret, path }
   let pendingKeyFile = null;
   const MAX_2FA_ATTEMPTS = 5;
+  const MIN_MASTER_PASSWORD_LENGTH = 12; // for new passwords; existing shorter ones still log in
   const MAX_MASTER_PASSWORD_LENGTH = 1024;
 
   // --- Clipboard auto-clear ---
-  const CLIPBOARD_CLEAR_MS = 30 * 1000;
+  const CLIPBOARD_CLEAR_OPTIONS = [10, 30, 60, 120, 0]; // seconds, 0 = never clear
+  let clipboardClearMs = 30 * 1000;
   let clipboardSecret = null;
   let clipboardTimer = null;
 
@@ -231,8 +233,16 @@ app.whenReady().then(() => {
     if (typeof text !== 'string' || text.length === 0 || text.length > 100000) return false;
     await clearClipboardIfOurs();
     await clipboard.writeText(text);
-    clipboardSecret = text;
-    clipboardTimer = setTimeout(clearClipboardIfOurs, CLIPBOARD_CLEAR_MS);
+    if (clipboardClearMs > 0) {
+      clipboardSecret = text;
+      clipboardTimer = setTimeout(clearClipboardIfOurs, clipboardClearMs);
+    }
+    return true;
+  });
+
+  handle('set-clipboard-clear-seconds', (event, seconds) => {
+    if (!CLIPBOARD_CLEAR_OPTIONS.includes(seconds)) return false;
+    clipboardClearMs = seconds * 1000;
     return true;
   });
 
@@ -480,8 +490,8 @@ app.whenReady().then(() => {
     if (firstName.length > 64 || lastName.length > 64) {
       return { success: false, error: 'Girilen bilgiler çok uzun.' };
     }
-    if (masterPassword.length < 8) {
-      return { success: false, error: 'Şifre en az 8 karakter olmalıdır.' };
+    if (masterPassword.length < MIN_MASTER_PASSWORD_LENGTH) {
+      return { success: false, error: 'Şifre en az 12 karakter olmalıdır.' };
     }
     if (masterPassword.length > MAX_MASTER_PASSWORD_LENGTH) {
       return { success: false, error: 'Şifre çok uzun.' };
@@ -874,8 +884,8 @@ app.whenReady().then(() => {
     const userId = currentUserId;
     const oldKey = currentKey;
 
-    if (typeof newPassword !== 'string' || newPassword.length < 8) {
-      return { success: false, error: 'Şifre en az 8 karakter olmalıdır.' };
+    if (typeof newPassword !== 'string' || newPassword.length < MIN_MASTER_PASSWORD_LENGTH) {
+      return { success: false, error: 'Şifre en az 12 karakter olmalıdır.' };
     }
     if (newPassword.length > MAX_MASTER_PASSWORD_LENGTH) {
       return { success: false, error: 'Şifre çok uzun.' };

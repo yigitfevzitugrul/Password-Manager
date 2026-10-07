@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     unlockBackup: (password) => ipcRenderer.invoke('unlock-backup', password),
     cancelBackup: () => ipcRenderer.invoke('cancel-backup'),
     copyToClipboard: (text) => ipcRenderer.invoke('copy-to-clipboard', text),
+    setClipboardClearSeconds: (seconds) => ipcRenderer.invoke('set-clipboard-clear-seconds', seconds),
     onVaultLocked: (callback) => {
         const listener = () => callback();
         ipcRenderer.on('vault-locked', listener);

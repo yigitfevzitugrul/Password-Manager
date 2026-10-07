@@ -136,7 +136,7 @@ Karakter türlerine göre renklendirilmiş önizleme, bit entropisi göstergesi 
 
 - **Sıfır Bilgi Prensibi (Zero-Knowledge):** Ana şifreniz hiçbir zaman diske açık metin olarak kaydedilmez ve geliştiriciler dahil kimse tarafından sıfırlanamaz.
 - **k-Anonymity Sızıntı Denetimi:** Have I Been Pwned API sorgularında şifrenin tamamı değil, SHA-1 özetinin yalnızca ilk 5 karakteri gönderilir; şifreniz asla açığa çıkmaz.
-- **Oturum Koruması:** Kasa açıkken bellekte yalnızca türetilmiş anahtar tutulur. Kasa 5 dakika hareketsizlikte, ekran kilitlenince ve uyku modunda otomatik kilitlenir; kopyalanan şifreler 30 saniye sonra panodan silinir.
+- **Oturum Koruması:** Kasa açıkken bellekte yalnızca türetilmiş anahtar tutulur. Kasa ayarlanabilir bir hareketsizlik süresinden sonra (varsayılan 5 dakika), ekran kilitlenince ve uyku modunda otomatik kilitlenir; kopyalanan şifreler ayarlanabilir bir süre sonra (varsayılan 30 saniye) panodan silinir.
 - **Yerel Depolama İzolasyonu:** Her kullanıcının kasa dosyası işletim sisteminin güvenli uygulama verisi dizininde (`%APPDATA%/sifreyonetici`) ayrı dosyalarda tutulur.
 
 ---

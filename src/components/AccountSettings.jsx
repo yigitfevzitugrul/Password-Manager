@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { exportToCSV, exportToJSON, triggerDownload, parseCSV, parseJSON } from '../utils/csvHelper';
 import { v4 as uuidv4 } from 'uuid';
+import { evaluateMasterPassword, MASTER_PASSWORD_MIN_LENGTH } from '../utils/masterPasswordStrength';
+import { AUTO_LOCK_OPTIONS, CLIPBOARD_CLEAR_OPTIONS } from '../utils/securityTimers';
 
 const LockIcon = () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -58,6 +60,14 @@ const UploadIcon = () => (
     </svg>
 );
 
+const AlertTriangleIcon = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+        <line x1="12" y1="9" x2="12" y2="13" />
+        <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+);
+
 const CopyIcon = () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
@@ -65,7 +75,7 @@ const CopyIcon = () => (
     </svg>
 );
 
-function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, theme, toggleTheme, lang, setLang, texts }) {
+function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, theme, toggleTheme, lang, setLang, autoLockMinutes, setAutoLockMinutes, clipboardSeconds, setClipboardSeconds, texts }) {
     // Password Change State
     const [oldPassword, setOldPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
@@ -158,8 +168,12 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
             setStatus({ type: 'error', msg: texts.msgPassMismatch });
             return;
         }
-        if (newPassword.length < 8) {
+        if (newPassword.length < MASTER_PASSWORD_MIN_LENGTH) {
             setStatus({ type: 'error', msg: texts.msgShortPass });
+            return;
+        }
+        if (!evaluateMasterPassword(newPassword, texts, [currentUser?.username]).acceptable) {
+            setStatus({ type: 'error', msg: texts.msgWeakMaster });
             return;
         }
 
@@ -471,6 +485,8 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
 
     const formatBackupDate = (timestamp) =>
         new Date(timestamp).toLocaleString(lang === 'tr' ? 'tr-TR' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+
+    const newPasswordStrength = evaluateMasterPassword(newPassword, texts, [currentUser?.username]);
 
     return (
         <div className="account-settings">
@@ -1003,6 +1019,22 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
                             onChange={e => setNewPassword(e.target.value)}
                             required
                         />
+                        {newPasswordStrength && (
+                            <div className="strength-bar-container">
+                                <div className="strength-bar">
+                                    <div
+                                        className="strength-bar-fill"
+                                        style={{ width: `${newPasswordStrength.level}%`, background: newPasswordStrength.color }}
+                                    />
+                                </div>
+                                <div className="strength-label" style={{ color: newPasswordStrength.color }}>
+                                    {newPasswordStrength.label}
+                                </div>
+                            </div>
+                        )}
+                        <p className="master-password-hint">
+                            {newPasswordStrength ? `${texts.crackTimeLabel} ${newPasswordStrength.crackTime}. ` : ''}{texts.masterPasswordHint}
+                        </p>
                     </div>
                     <div className="input-group">
                         <label className="input-label">{texts.labelConfirmPass}</label>
@@ -1024,6 +1056,50 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
                         {loading ? texts.updating : texts.btnUpdatePass}
                     </button>
                 </form>
+            </div>
+
+            {/* SECURITY TIMERS */}
+            <div className="settings-section">
+                <h3><LockIcon /> {texts.timersTitle}</h3>
+                <div className="settings-row">
+                    <span>{texts.autoLockLabel}</span>
+                    <div className="timer-choice">
+                    {autoLockMinutes === 0 && (
+                        <span className="not-recommended-chip"><AlertTriangleIcon /> {texts.notRecommended}</span>
+                    )}
+                    <select
+                        className="sort-select"
+                        value={autoLockMinutes}
+                        onChange={e => setAutoLockMinutes(Number(e.target.value))}
+                    >
+                        {AUTO_LOCK_OPTIONS.map(minutes => (
+                            <option key={minutes} value={minutes}>
+                                {minutes === 0 ? texts.neverOption : texts.minutesOption.replace('{n}', minutes)}
+                            </option>
+                        ))}
+                    </select>
+                    </div>
+                </div>
+                <div className="settings-row">
+                    <span>{texts.clipboardClearLabel}</span>
+                    <div className="timer-choice">
+                    {clipboardSeconds === 0 && (
+                        <span className="not-recommended-chip"><AlertTriangleIcon /> {texts.notRecommended}</span>
+                    )}
+                    <select
+                        className="sort-select"
+                        value={clipboardSeconds}
+                        onChange={e => setClipboardSeconds(Number(e.target.value))}
+                    >
+                        {CLIPBOARD_CLEAR_OPTIONS.map(seconds => (
+                            <option key={seconds} value={seconds}>
+                                {seconds === 0 ? texts.neverOption : texts.secondsOption.replace('{n}', seconds)}
+                            </option>
+                        ))}
+                    </select>
+                    </div>
+                </div>
+                <p className="section-subtitle">{texts.timersHint}</p>
             </div>
 
             {/* APPEARANCE */}

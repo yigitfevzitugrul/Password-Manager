@@ -170,7 +170,7 @@ const CATEGORIES = [
     { key: 'other', icon: '📌', labelKey: 'catOther' }
 ];
 
-const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, lang, setLang, texts }) => {
+const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, lang, setLang, autoLockMinutes, setAutoLockMinutes, clipboardSeconds, setClipboardSeconds, texts }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [showModal, setShowModal] = useState(false);
     const [editingItem, setEditingItem] = useState(null);
@@ -909,6 +909,10 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
                         toggleTheme={toggleTheme}
                         lang={lang}
                         setLang={setLang}
+                        autoLockMinutes={autoLockMinutes}
+                        setAutoLockMinutes={setAutoLockMinutes}
+                        clipboardSeconds={clipboardSeconds}
+                        setClipboardSeconds={setClipboardSeconds}
                         texts={texts}
                     />
                 )}

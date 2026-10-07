@@ -136,7 +136,7 @@ Two-factor authentication configuration, streamlined JSON & CSV backup actions, 
 
 - **Zero-Knowledge Principle:** Your master password is never stored anywhere in plain text. Neither developers nor third parties can recover your vault if you lose your password.
 - **k-Anonymity Leak Verification:** When querying the Have I Been Pwned API, only the first 5 characters of the SHA-1 password hash are sent. Your full password or hash is never exposed.
-- **Session Protection:** Only the derived key is kept in memory while the vault is unlocked. The vault locks automatically after 5 minutes of inactivity, on screen lock and on sleep, and copied passwords are cleared from the clipboard after 30 seconds.
+- **Session Protection:** Only the derived key is kept in memory while the vault is unlocked. The vault locks automatically after a configurable period of inactivity (5 minutes by default), on screen lock and on sleep, and copied passwords are cleared from the clipboard after a configurable delay (30 seconds by default).
 - **Local Storage Isolation:** Each user's encrypted vault is stored in the operating system's designated app data directory (`%APPDATA%/sifreyonetici`) as an isolated file.
 
 ---

@@ -4,9 +4,7 @@ import Dashboard from './components/Dashboard';
 
 import { translations } from './translations';
 import { TRASH_RETENTION_MS } from './utils/trash';
-
-// Lock the vault after this much time without any user input
-const AUTO_LOCK_MS = 5 * 60 * 1000;
+import { readAutoLockMinutes, readClipboardClearSeconds } from './utils/securityTimers';
 
 function App() {
     const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -15,6 +13,20 @@ function App() {
     const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
     const [lang, setLang] = useState(localStorage.getItem('lang') || 'tr');
     const [lockNotice, setLockNotice] = useState(false);
+    const [autoLockMinutes, setAutoLockMinutes] = useState(readAutoLockMinutes);
+    const [clipboardSeconds, setClipboardSeconds] = useState(readClipboardClearSeconds);
+
+    React.useEffect(() => {
+        localStorage.setItem('auto_lock_minutes', String(autoLockMinutes));
+    }, [autoLockMinutes]);
+
+    // The clipboard is cleared by the main process, so it has to know the chosen delay
+    React.useEffect(() => {
+        localStorage.setItem('clipboard_clear_seconds', String(clipboardSeconds));
+        if (window.electronAPI && window.electronAPI.setClipboardClearSeconds) {
+            window.electronAPI.setClipboardClearSeconds(clipboardSeconds).catch(() => {});
+        }
+    }, [clipboardSeconds]);
 
     React.useEffect(() => {
         document.documentElement.setAttribute('data-theme', theme);
@@ -61,7 +73,10 @@ function App() {
         };
         const reset = () => {
             clearTimeout(timer);
-            timer = setTimeout(lock, AUTO_LOCK_MS);
+            // 0 = never lock on inactivity
+            if (autoLockMinutes > 0) {
+                timer = setTimeout(lock, autoLockMinutes * 60 * 1000);
+            }
         };
         const events = ['mousemove', 'mousedown', 'keydown', 'wheel', 'touchstart'];
         events.forEach(name => window.addEventListener(name, reset, { passive: true }));
@@ -71,7 +86,7 @@ function App() {
             clearTimeout(timer);
             events.forEach(name => window.removeEventListener(name, reset));
         };
-    }, [isAuthenticated]);
+    }, [isAuthenticated, autoLockMinutes]);
 
     const handleLogin = (data, user) => {
         setLockNotice(false);
@@ -111,6 +126,10 @@ function App() {
                     toggleTheme={toggleTheme}
                     lang={lang}
                     setLang={setLang}
+                    autoLockMinutes={autoLockMinutes}
+                    setAutoLockMinutes={setAutoLockMinutes}
+                    clipboardSeconds={clipboardSeconds}
+                    setClipboardSeconds={setClipboardSeconds}
                     texts={texts}
                 />
             ) : (

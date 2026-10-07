@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { evaluateMasterPassword, MASTER_PASSWORD_MIN_LENGTH } from '../utils/masterPasswordStrength';
 
 const ShieldIcon = () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -181,22 +182,6 @@ function Login({ onLogin, texts, notice }) {
         }, 1000);
     };
 
-    const getPasswordStrength = (pw) => {
-        if (!pw) return { level: 0, label: '', color: 'transparent' };
-        let score = 0;
-        if (pw.length >= 8) score++;
-        if (pw.length >= 12) score++;
-        if (/[A-Z]/.test(pw) && /[a-z]/.test(pw)) score++;
-        if (/[0-9]/.test(pw)) score++;
-        if (/[^A-Za-z0-9]/.test(pw)) score++;
-
-        if (score <= 1) return { level: 20, label: texts.strengthWeak || 'Zayıf', color: 'var(--danger)' };
-        if (score <= 2) return { level: 40, label: texts.strengthFair || 'Orta', color: '#f59e0b' };
-        if (score <= 3) return { level: 60, label: texts.strengthGood || 'İyi', color: '#3b82f6' };
-        if (score <= 4) return { level: 80, label: texts.strengthStrong || 'Güçlü', color: '#10b981' };
-        return { level: 100, label: texts.strengthVeryStrong || 'Çok Güçlü', color: '#10b981' };
-    };
-
     // --- LOGIN HANDLER ---
     const handleLogin = async (e) => {
         if (e) e.preventDefault();
@@ -346,8 +331,12 @@ function Login({ onLogin, texts, notice }) {
             setError(texts.placeholderLastName || 'Lütfen soyisminizi girin.');
             return;
         }
-        if (password.length < 8) {
-            setError(texts ? texts.msgShortPass : 'Şifre en az 8 karakter olmalıdır.');
+        if (password.length < MASTER_PASSWORD_MIN_LENGTH) {
+            setError(texts.msgShortPass);
+            return;
+        }
+        if (!evaluateMasterPassword(password, texts, [trimmedFirst, trimmedLast]).acceptable) {
+            setError(texts.msgWeakMaster);
             return;
         }
         if (password !== confirmPassword) {
@@ -384,7 +373,7 @@ function Login({ onLogin, texts, notice }) {
     if (!texts) return null;
     if (isLoadingUsers) return <div className="loading">{texts.updating}</div>;
 
-    const strength = isRegisterMode ? getPasswordStrength(password) : null;
+    const strength = isRegisterMode ? evaluateMasterPassword(password, texts, [firstName.trim(), lastName.trim()]) : null;
     const selectedUser = usersList.find(u => u.id === selectedUserId) || usersList[0];
 
     return (
@@ -639,6 +628,11 @@ function Login({ onLogin, texts, notice }) {
                                             {strength.label}
                                         </div>
                                     </div>
+                                )}
+                                {isRegisterMode && (
+                                    <p className="master-password-hint">
+                                        {strength ? `${texts.crackTimeLabel} ${strength.crackTime}. ` : ''}{texts.masterPasswordHint}
+                                    </p>
                                 )}
                             </div>
 
