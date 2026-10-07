@@ -15,7 +15,7 @@
         "@vitejs/plugin-react": "^5.1.2",
         "concurrently": "^9.2.1",
         "cross-env": "^10.1.0",
-        "electron": "^39.2.7",
+        "electron": "^44.6.0",
         "electron-builder": "^26.0.12",
         "react": "^19.2.3",
         "react-dom": "^19.2.3",
@@ -60,5 +60,8 @@
             "shortcutName": "Orenda Pass"
         },
         "publish": null
+    },
+    "overrides": {
+        "shell-quote": "^1.12.0"
     }
 }

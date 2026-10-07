@@ -12,7 +12,7 @@
   </p>
 
   <p align="center">
-    <img src="https://img.shields.io/badge/Electron-39.8-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron" />
+    <img src="https://img.shields.io/badge/Electron-44.6-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron" />
     <img src="https://img.shields.io/badge/React-19.2-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React" />
     <img src="https://img.shields.io/badge/Vite-7.3-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="Vite" />
     <img src="https://img.shields.io/badge/Security-AES--256--GCM-success?style=for-the-badge&logo=shield" alt="AES-256" />
@@ -180,7 +180,7 @@ Two-factor authentication configuration, streamlined JSON & CSV backup actions, 
 
 | Domain | Technology | Purpose |
 | :--- | :--- | :--- |
-| **Desktop Runtime** | [Electron 39](https://www.electronjs.org/) | Cross-platform desktop shell & IPC |
+| **Desktop Runtime** | [Electron 44](https://www.electronjs.org/) | Cross-platform desktop shell & IPC |
 | **UI Framework** | [React 19](https://react.dev/) | Component architecture & reactivity |
 | **Build Tool** | [Vite 7](https://vitejs.dev/) | Fast HMR dev server & asset bundler |
 | **Packaging** | [electron-builder](https://www.electron.build/) | NSIS Windows installer generation |
