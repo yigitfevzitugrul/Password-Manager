@@ -2069,6 +2069,31 @@ button {
   padding-left: 0.5rem;
 }
 
+.sidebar-section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 4px 0.5rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.sidebar-section-toggle:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover, rgba(127, 127, 127, 0.1));
+}
+
+.sidebar-section-toggle svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
 .category-list {
   display: flex;
   flex-direction: column;

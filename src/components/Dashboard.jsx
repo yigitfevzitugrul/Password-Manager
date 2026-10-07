@@ -135,6 +135,20 @@ const ShieldAlertIcon = () => (
     </svg>
 );
 
+const ChevronIcon = ({ open = true }) => (
+    <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.2s ease' }}
+    >
+        <polyline points="6 9 12 15 18 9" />
+    </svg>
+);
+
 // Categories definitions
 const CATEGORIES = [
     { key: 'all', icon: '📁', labelKey: 'catAll' },
@@ -158,6 +172,7 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
 
     // Option 5: Category Filter
     const [selectedCategory, setSelectedCategory] = useState('all');
+    const [categoriesOpen, setCategoriesOpen] = useState(() => localStorage.getItem('categories_open') !== 'false');
 
     // Option 6: Favorites Filter
     const [showOnlyFavorites, setShowOnlyFavorites] = useState(false);
@@ -194,6 +209,13 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
     const handleSortChange = (newSort) => {
         setSortMode(newSort);
         localStorage.setItem('sort_preference', newSort);
+    };
+
+    const toggleCategories = () => {
+        setCategoriesOpen(prev => {
+            localStorage.setItem('categories_open', String(!prev));
+            return !prev;
+        });
     };
 
     const showToast = (message) => {
@@ -532,7 +554,16 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
                 {/* Option 5: Categories List in Sidebar */}
                 {activeTab === 'passwords' && (
                     <div className="sidebar-categories">
-                        <div className="sidebar-section-title">{texts.labelCategory}</div>
+                        <button
+                            type="button"
+                            className="sidebar-section-title sidebar-section-toggle"
+                            onClick={toggleCategories}
+                            aria-expanded={categoriesOpen}
+                        >
+                            <span>{texts.labelCategory}</span>
+                            <ChevronIcon open={categoriesOpen} />
+                        </button>
+                        {categoriesOpen && (
                         <div className="category-list">
                             {CATEGORIES.map(cat => {
                                 const count = getCategoryCount(cat.key);
@@ -554,6 +585,7 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
                                 );
                             })}
                         </div>
+                        )}
                     </div>
                 )}
 
