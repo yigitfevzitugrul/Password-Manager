@@ -1,16 +1,18 @@
 <div align="center">
 
+  <strong>English</strong> | <a href="README_TR.md">Türkçe</a>
+
   <img src="Image/icon.png" alt="Orenda Pass Logo" width="110" height="110" style="border-radius: 24px; box-shadow: 0 8px 24px rgba(37,99,235,0.3);" />
 
   # Orenda Pass
-  ### Güvenli, Şifreli ve Sıfır Bilgili (Zero-Knowledge) Yerel Şifre Yöneticisi
+  ### Secure, Encrypted & Zero-Knowledge Local Password Manager
 
   <p align="center">
-    Verilerinizin kontrolünü tamamen elinize alın. Bulut bağımlılığı olmadan, <strong>AES-256</strong> şifreleme ile yerel ve bağımsız kullanıcı kasaları.
+    Take complete control over your credentials. Zero cloud dependencies, military-grade <strong>AES-256</strong> encryption, and isolated multi-user vaults.
   </p>
 
   <p align="center">
-    <img src="https://img.shields.io/badge/Electron-39.2-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron" />
+    <img src="https://img.shields.io/badge/Electron-39.8-47848F?style=for-the-badge&logo=electron&logoColor=white" alt="Electron" />
     <img src="https://img.shields.io/badge/React-19.2-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React" />
     <img src="https://img.shields.io/badge/Vite-7.3-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="Vite" />
     <img src="https://img.shields.io/badge/Security-AES--256--GCM-success?style=for-the-badge&logo=shield" alt="AES-256" />
@@ -18,159 +20,175 @@
   </p>
 
   <p align="center">
-    <a href="#-temel-özellikler">Özellikler</a> •
-    <a href="#-ekran-görüntüleri">Ekran Görüntüleri</a> •
-    <a href="#-güvenlik-mimarisi">Güvenlik</a> •
-    <a href="#-kurulum-ve-çalıştırma">Kurulum</a> •
-    <a href="README_EN.md">English Documentation</a>
+    <a href="#-key-features">Key Features</a> •
+    <a href="#-screenshots">Screenshots</a> •
+    <a href="#-security-architecture">Security</a> •
+    <a href="#-download">Download</a> •
+    <a href="#-installation--usage">Build from Source</a> •
+    <a href="README_TR.md">Türkçe Dokümantasyon</a>
   </p>
 
 </div>
 
 ---
 
-## 🌟 Genel Bakış
+## 🌟 Overview
 
-**Orenda Pass**, hassas hesap bilgilerinizi, kimlik doğrulama anahtarlarınızı (TOTP/2FA) ve gizli notlarınızı en yüksek güvenlik standartlarında saklamanız için geliştirilmiş açık kaynaklı bir masaüstü uygulamasıdır.
+**Orenda Pass** is an open-source desktop application engineered to safeguard your sensitive login credentials, two-factor authentication tokens (TOTP/2FA), and confidential notes with the highest security standards.
 
-Geleneksel bulut tabanlı şifre yöneticilerinin aksine, **Orenda Pass** "Sıfır Bilgi" (*Zero-Knowledge*) prensibiyle çalışır. Ana şifreniz ve verileriniz hiçbir sunucuya iletilmez; şifreleme ve çözme işlemleri tamamen sizin bilgisayarınızda gerçekleşir.
-
----
-
-## 🛡️ Temel Özellikler
-
-- 🔒 **Uçtan Uca Yerel Şifreleme (AES-256):** Tüm kasa verileriniz endüstri standardı AES-256 algoritmaları ve scrypt anahtar türetme ile şifrelenir.
-- 👥 **Çoklu Kullanıcı Desteği:** Aynı bilgisayarı kullanan farklı bireyler için birbirinden tamamen izole edilmiş, bağımsız şifrelenmiş kullanıcı hesapları.
-- 🔐 **İki Faktörlü Doğrulama (2FA / TOTP Entegrasyonu):**
-  - **Uygulama İçi 2FA:** Kasaya girişte Google Authenticator, Microsoft Authenticator ve uyumlu TOTP uygulamaları desteği.
-  - **Şifreler İçin TOTP:** Saklanan her hesap için 2FA kodu üretme ve geri sayım sayacı.
-- 🔍 **Have I Been Pwned (HIBP) Sızıntı Analizi:** Şifrelerinizin bilinen küresel veri ihlallerinde yer alıp almadığını *k-Anonymity* güvenli sorgulama modeliyle denetleme.
-- 📊 **Kasa Güvenlik Raporu:** Dinamik güvenlik skoru, zayıf ve tekrar eden şifre tespitleri, güvenlik önerileri.
-- 🎲 **Gelişmiş Kriptografik Şifre Oluşturucu:** Renk kodlu karakter ayrımı (sayılar, semboller, harfler), gerçek zamanlı entropi hesabı ve tek tıkla ön ayarlar (*Dengeli, Güçlü, Maksimum, PIN*).
-- 📦 **Esnek İçe / Dışa Aktarma (Yedekleme):** Chrome, Bitwarden, CSV ve JSON formatlarındaki yedekleri kolayca içeri aktarma veya dışa aktarma.
-- ⏱️ **Kaba Kuvvet (Brute-Force) Koruması:** Arka arkaya yapılan hatalı giriş denemelerinde kademeli kilitlenme ve güvenlik zamanlayıcısı.
-- 🌗 **Karanlık & Aydınlık Mod:** Göz yormayan Obsidian Black ve modern Clean Slate temaları.
-- 🌍 **Çoklu Dil Desteği:** Tek tıkla Türkçe ve İngilizce dil değişimi.
+Unlike conventional cloud-based password managers, **Orenda Pass** operates under a strict **Zero-Knowledge** architecture. Your master password and encrypted vault data never leave your local machine—all cryptographic operations are performed on-device.
 
 ---
 
-## 📷 Ekran Görüntüleri
+## 📥 Download
 
-### 1. Giriş ve Hesap Seçim Ekranı
-Çoklu kullanıcı mimarisi, zero-knowledge şifre koruması ve bağımsız hesap yönetimi.
+**[⬇️ Download the latest Windows installer](https://github.com/yigitfevzitugrul/Password-Manager/releases/latest)**
+
+1. Download `Orenda.Pass-Setup-x.y.z.exe` from the **Assets** section of the latest release.
+2. Run the installer. It is not code-signed, so Windows SmartScreen may show a warning — choose **More info → Run anyway**.
+3. Launch **Orenda Pass**, create an account and choose a master password. **The master password cannot be reset** — if you forget it, your vault cannot be opened.
+
+Requires Windows 10/11 (64-bit). Each release lists the SHA-256 checksum of the installer so you can verify your download.
+
+---
+
+## 🛡️ Key Features
+
+- 🔒 **End-to-End Local Encryption (AES-256):** Vault items are encrypted using industry-standard AES-256 cipher alongside scrypt key derivation.
+- 👥 **Multi-User Account Architecture:** Complete isolation between multiple users on the same computer, each with their own encrypted vault.
+- 🔐 **Two-Factor Authentication (2FA / TOTP):**
+  - **Vault Entry 2FA:** Protect your master vault login using Google Authenticator, Microsoft Authenticator, or any compatible TOTP app.
+  - **Account TOTP Tokens:** Built-in TOTP token generation with live countdown timers for stored accounts.
+- 🔍 **Have I Been Pwned (HIBP) Breach Scanner:** Check if any of your saved passwords have been compromised in known global breaches using secure *k-Anonymity*.
+- 📊 **Vault Health & Security Score:** Real-time analytics analyzing weak, reused, or compromised passwords alongside an overall security score.
+- 🎲 **Cryptographic Password Generator:** Color-coded character breakdown (numbers, symbols, letters), entropy bit calculation, and one-click presets (*Balanced, Strong, Maximum, PIN*).
+- 📦 **Data Management & Backups:** Seamless export and import with support for Chrome, Bitwarden, CSV, and JSON formats.
+- ⏱️ **Brute-Force Attack Prevention:** Exponential lockout penalty and countdown timers triggered on consecutive failed login attempts.
+- 🌗 **Dark & Light Themes:** Polished Obsidian Black and Clean Slate visual themes.
+- 🌍 **Multi-Language Support:** Instant one-click toggle between English and Turkish.
+
+---
+
+## 📷 Screenshots
+
+### 1. Login & Multi-Account Selection
+Sleek authentication screen with multi-user profiles and zero-knowledge security protection.
 <p align="center">
-  <img src="Image/1.png" alt="Giriş Ekranı" width="900" style="border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);" />
+  <img src="Image/1.png" alt="Login Screen" width="900" style="border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);" />
 </p>
 
 ---
 
-### 2. Ana Kasa & Şifre Yönetimi Paneli
-Kategorize edilmiş kayıtlar, anlık filtreleme, favoriler, şifre gücü göstergeleri ve hızlı kopyalama eylemleri.
+### 2. Main Vault & Password Management
+Categorized credentials, real-time search, sorting, strength badges, favorites, and quick copy utilities.
 <p align="center">
-  <img src="Image/2.png" alt="Ana Kasa Paneli" width="900" style="border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);" />
+  <img src="Image/2.png" alt="Main Dashboard" width="900" style="border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);" />
 </p>
 
 ---
 
-### 3. Kasa Güvenlik Raporu & Sızıntı Denetimi
-Kapsamlı kasa güvenlik skoru, veri sızıntısı tarayıcısı (HIBP) ve tekrar eden şifre uyarıları.
+### 3. Vault Health Report & Breach Analysis
+Interactive vault security score gauge, Have I Been Pwned breach scanner, and reused password detection.
 <p align="center">
-  <img src="Image/3.png" alt="Kasa Güvenlik Raporu" width="900" style="border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);" />
+  <img src="Image/3.png" alt="Vault Health Report" width="900" style="border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);" />
 </p>
 
 ---
 
-### 4. Kriptografik Şifre Oluşturucu
-Karakter türlerine göre renklendirilmiş önizleme, bit entropisi göstergesi ve hazır ön ayarlar.
+### 4. Advanced Password Generator
+Color-coded character distinction, bit entropy meter, and fine-tuned preset options.
 <p align="center">
-  <img src="Image/4.png" alt="Şifre Oluşturucu" width="900" style="border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);" />
+  <img src="Image/4.png" alt="Password Generator" width="900" style="border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);" />
 </p>
 
 ---
 
-### 5. Hesap Ayarları, 2FA & Veri Yönetimi
-İki faktörlü kimlik doğrulama ayarları, modern JSON & CSV içe/dışa aktarma paneli ve tema tercihleri.
+### 5. Account Settings, 2FA & Data Management
+Two-factor authentication configuration, streamlined JSON & CSV backup actions, and theme preferences.
 <p align="center">
-  <img src="Image/5.png" alt="Hesap Ayarları ve Veri Yönetimi" width="900" style="border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);" />
+  <img src="Image/5.png" alt="Account Settings and Data Management" width="900" style="border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);" />
 </p>
 
 ---
 
-## 🔒 Güvenlik Mimarisi
+## 🔒 Security Architecture
 
 ```
 +-------------------------------------------------------------------+
-|                        Kullanıcı Ana Şifresi                       |
+|                        User Master Password                       |
 +-------------------------------------------------------------------+
                                   |
                                   v
 +-------------------------------------------------------------------+
-|              scrypt Anahtar Türetme (100.000+ İterasyon)           |
+|          scrypt Key Derivation (memory-hard, N = 2^17)            |
 +-------------------------------------------------------------------+
                                   |
                                   v
 +-------------------------------------------------------------------+
-|                    AES-256-GCM Şifreleme                           |
+|                     AES-256-GCM Encryption                        |
 +-------------------------------------------------------------------+
                                   |
                                   v
 +-------------------------------------------------------------------+
-|       Yerel Dosya Sistemi (vault_[userId].enc & users.json)        |
+|       Local Storage Filesystem (vault_[userId].enc & users.json)  |
 +-------------------------------------------------------------------+
 ```
 
-- **Sıfır Bilgi Prensibi (Zero-Knowledge):** Ana şifreniz hiçbir zaman diske açık metin olarak kaydedilmez ve geliştiriciler dahil kimse tarafından sıfırlanamaz.
-- **k-Anonymity Sızıntı Denetimi:** Have I Been Pwned API sorgularında şifrenin tamamı değil, SHA-1 özetinin yalnızca ilk 5 karakteri gönderilir; şifreniz asla açığa çıkmaz.
-- **Yerel Depolama İzolasyonu:** Her kullanıcının kasa dosyası işletim sisteminin güvenli uygulama verisi dizininde (`%APPDATA%/sifreyonetici`) ayrı dosyalarda tutulur.
+- **Zero-Knowledge Principle:** Your master password is never stored anywhere in plain text. Neither developers nor third parties can recover your vault if you lose your password.
+- **k-Anonymity Leak Verification:** When querying the Have I Been Pwned API, only the first 5 characters of the SHA-1 password hash are sent. Your full password or hash is never exposed.
+- **Session Protection:** Only the derived key is kept in memory while the vault is unlocked. The vault locks automatically after 5 minutes of inactivity, on screen lock and on sleep, and copied passwords are cleared from the clipboard after 30 seconds.
+- **Local Storage Isolation:** Each user's encrypted vault is stored in the operating system's designated app data directory (`%APPDATA%/sifreyonetici`) as an isolated file.
 
 ---
 
-## 🚀 Kurulum ve Çalıştırma
+## 🚀 Installation & Usage
 
-### Gereksinimler
-- [Node.js](https://nodejs.org/) (v18 veya üzeri önerilir)
-- npm veya yarn
+> Just want to use the app? See [Download](#-download). The steps below are for building from source.
 
-### Adımlar
+### Prerequisites
+- [Node.js](https://nodejs.org/) (v18 or higher recommended)
+- npm or yarn
 
-1. **Depoyu klonlayın:**
+### Setup
+
+1. **Clone the repository:**
    ```bash
    git clone https://github.com/yigitfevzitugrul/Password-Manager.git
    cd Password-Manager
    ```
 
-2. **Bağımlılıkları yükleyin:**
+2. **Install dependencies:**
    ```bash
    npm install
    ```
 
-3. **Geliştirici modunda başlatın:**
+3. **Start in development mode:**
    ```bash
    npm run dev
    ```
-   *(Vite dev sunucusu ve Electron masaüstü penceresi eşzamanlı olarak açılacaktır.)*
+   *(Launches the Vite dev server and the Electron application concurrently.)*
 
-4. **Üretim sürümünü derleyin (Windows Installer):**
+4. **Build production installer (Windows NSIS Setup):**
    ```bash
    npm run build
    ```
-   *(`dist-electron/` dizini altında Windows `.exe` kurulum dosyası üretilir.)*
+   *(Generates a stand-alone `.exe` installer inside the `dist-electron/` directory.)*
 
 ---
 
-## 🛠️ Kullanılan Teknolojiler
+## 🛠️ Technology Stack
 
-| Alan | Teknoloji | Açıklama |
+| Domain | Technology | Purpose |
 | :--- | :--- | :--- |
-| **Masaüstü Altyapısı** | [Electron 39](https://www.electronjs.org/) | Çapraz platform masaüstü çekirdeği |
-| **Ön Yüz Kütüphanesi** | [React 19](https://react.dev/) | Hızlı ve reaktif bileşen mimarisi |
-| **Derleme & Paketleme** | [Vite 7](https://vitejs.dev/) | Ultra hızlı HMR ve üretim derleyicisi |
-| **Dağıtım / Paketleyici** | [electron-builder](https://www.electron.build/) | Windows NSIS kurulum paketi oluşturucu |
-| **Güvenlik & Kripto** | Node.js `crypto` | AES-256, scrypt, SHA-256 / SHA-1 |
-| **Tipografi & Stil** | Space Grotesk & Inter | Modern ve rafine kullanıcı deneyimi |
+| **Desktop Runtime** | [Electron 39](https://www.electronjs.org/) | Cross-platform desktop shell & IPC |
+| **UI Framework** | [React 19](https://react.dev/) | Component architecture & reactivity |
+| **Build Tool** | [Vite 7](https://vitejs.dev/) | Fast HMR dev server & asset bundler |
+| **Packaging** | [electron-builder](https://www.electron.build/) | NSIS Windows installer generation |
+| **Cryptography** | Node.js `crypto` | AES-256, scrypt, SHA-256 / SHA-1 |
+| **Design & Typography**| Space Grotesk & Inter | Modern dark-mode aesthetic |
 
 ---
 
-## 📄 Lisans
+## 📄 License
 
-Bu proje kişisel ve açık kaynaklı kullanım amacıyla geliştirilmiştir. Ayrıntılar için `LICENSE` dosyasına bakabilirsiniz.
+Developed for personal and open-source use. See `LICENSE` for further details.
