@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Notification, Menu, shell, clipboard, session, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, shell, clipboard, session, powerMonitor, dialog } = require('electron');
 const path = require('path');
 const { fileURLToPath } = require('url');
 const fs = require('fs');
@@ -15,6 +15,7 @@ const {
 } = require('./fileSystem.cjs');
 const { is2FAEnabled, save2FAConfig, save2FASecret, read2FASecret, remove2FAData } = require('./twoFactorAuth.cjs');
 const { generateSecret, verifyTOTP } = require('./totp.cjs');
+const { listAutoBackups, createAutoBackup, readAutoBackup, writeAutoBackup } = require('./backups.cjs');
 const {
   createKey,
   encryptWithKey,
@@ -62,12 +63,6 @@ function handle(channel, listener) {
     if (!isTrustedSender(event)) throw new Error('Yetkisiz istek.');
     return listener(event, ...args);
   });
-}
-
-function safeEqual(a, b) {
-  const bufA = Buffer.from(String(a));
-  const bufB = Buffer.from(String(b));
-  return bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
 }
 
 function getAppIcon() {
@@ -194,6 +189,7 @@ app.whenReady().then(() => {
   let currentKey = null;
   let pending2FALogin = null;
   let pending2FASetupSecret = null;
+  let pendingBackup = null;
   const MAX_2FA_ATTEMPTS = 5;
   const MAX_MASTER_PASSWORD_LENGTH = 1024;
 
@@ -234,6 +230,7 @@ app.whenReady().then(() => {
     currentKey = null;
     pending2FALogin = null;
     pending2FASetupSecret = null;
+    pendingBackup = null;
     clearClipboardIfOurs();
     if (notifyRenderer && wasUnlocked && win && !win.isDestroyed()) {
       win.webContents.send('vault-locked');
@@ -307,88 +304,7 @@ app.whenReady().then(() => {
     return config.users.length > 0;
   });
 
-  // In-memory cache for pending email verification codes: email -> { code, expiresAt, attempts, firstName, lastName }
-  const pendingEmailCodes = new Map();
-
-  // Send 6-digit email verification code
-  const MAX_EMAIL_CODE_ATTEMPTS = 5;
   const str = (value) => (typeof value === 'string' ? value : '');
-
-  // Returns an error message, or null when the code matches. Too many wrong guesses burn the code.
-  function checkEmailCode(email, code) {
-    const pending = pendingEmailCodes.get(email);
-    if (!pending) {
-      return 'Bu e-posta için bekleyen bir doğrulama kodu bulunamadı. Lütfen tekrar kod gönderin.';
-    }
-    if (Date.now() > pending.expiresAt) {
-      pendingEmailCodes.delete(email);
-      return 'Doğrulama kodunun süresi dolmuş. Lütfen yeni bir kod isteyin.';
-    }
-    if (!/^\d{6}$/.test(code) || !safeEqual(pending.code, code)) {
-      pending.attempts++;
-      if (pending.attempts >= MAX_EMAIL_CODE_ATTEMPTS) {
-        pendingEmailCodes.delete(email);
-        return 'Çok fazla hatalı deneme. Lütfen yeni bir kod isteyin.';
-      }
-      return 'Girdiğiniz doğrulama kodu hatalı.';
-    }
-    return null;
-  }
-
-  handle('send-email-code', async (event, data) => {
-    const email = str(data && data.email).trim().toLowerCase();
-    const firstName = str(data && data.firstName).trim();
-    const lastName = str(data && data.lastName).trim();
-
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return { success: false, error: 'Lütfen geçerli bir e-posta adresi girin.' };
-    }
-
-    const config = getUsersList();
-    const emailExists = config.users.some(u => u.email && u.email.toLowerCase() === email);
-    if (emailExists) {
-      return { success: false, error: 'Bu e-posta adresi ile zaten kayıtlı bir hesap var.' };
-    }
-
-    // Generate random 6-digit verification code
-    const code = crypto.randomInt(100000, 1000000).toString();
-    pendingEmailCodes.set(email, {
-      code,
-      attempts: 0,
-      expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes
-      firstName,
-      lastName
-    });
-
-    // Native Windows OS notification
-    try {
-      if (Notification.isSupported()) {
-        const notif = new Notification({
-          title: '🔐 Orenda Pass — Doğrulama Kodu',
-          body: `Doğrulama kodunuz: ${code}\nBu kod ${email} adresi için oluşturuldu. (10 dk geçerlidir)`
-        });
-        notif.show();
-      }
-    } catch (e) {
-      console.error('Notification error:', e);
-    }
-
-    return {
-      success: true,
-      codePreview: code,
-      message: `${email} adresine 6 haneli doğrulama kodu gönderildi.`
-    };
-  });
-
-  // Verify email verification code
-  handle('verify-email-code', async (event, data) => {
-    const email = str(data && data.email).trim().toLowerCase();
-    const code = str(data && data.code).trim();
-
-    const error = checkEmailCode(email, code);
-    if (error) return { success: false, error };
-    return { success: true };
-  });
 
   // Create a brand new user account (Does NOT overwrite other users!)
   handle('register', async (event, payload) => {
@@ -398,9 +314,7 @@ app.whenReady().then(() => {
 
     const firstName = str(payload.firstName).trim();
     const lastName = str(payload.lastName).trim();
-    const email = str(payload.email).trim().toLowerCase();
     const masterPassword = str(payload.password);
-    const code = str(payload.code).trim();
 
     const username = `${firstName} ${lastName}`.trim();
 
@@ -410,7 +324,7 @@ app.whenReady().then(() => {
     if (!lastName) {
       return { success: false, error: 'Soyisim alanı boş bırakılamaz.' };
     }
-    if (firstName.length > 64 || lastName.length > 64 || email.length > 254) {
+    if (firstName.length > 64 || lastName.length > 64) {
       return { success: false, error: 'Girilen bilgiler çok uzun.' };
     }
     if (masterPassword.length < 8) {
@@ -419,24 +333,12 @@ app.whenReady().then(() => {
     if (masterPassword.length > MAX_MASTER_PASSWORD_LENGTH) {
       return { success: false, error: 'Şifre çok uzun.' };
     }
-    if (!email) {
-      return { success: false, error: 'Lütfen önce e-posta adresinize doğrulama kodu gönderin.' };
-    }
-
-    const codeError = checkEmailCode(email, code);
-    if (codeError) {
-      return { success: false, error: codeError };
-    }
-    // Code is valid! Consume it
-    pendingEmailCodes.delete(email);
-
     try {
       const keyMaterial = await createKey(masterPassword);
       const newUser = createNewUser({
         username,
         firstName,
-        lastName,
-        email
+        lastName
       });
 
       saveUserEncryptedData(newUser.id, encryptWithKey(JSON.stringify([]), keyMaterial));
@@ -453,8 +355,7 @@ app.whenReady().then(() => {
           id: newUser.id,
           username: newUser.username,
           firstName: newUser.firstName,
-          lastName: newUser.lastName,
-          email: newUser.email
+          lastName: newUser.lastName
         },
         data: []
       };
@@ -563,6 +464,12 @@ app.whenReady().then(() => {
       }
 
       lockVault(false);
+
+      try {
+        createAutoBackup(userId);
+      } catch (e) {
+        console.error('Auto backup error:', e.message);
+      }
 
       if (totpSecret !== null) {
         pending2FALogin = {
@@ -777,6 +684,16 @@ app.whenReady().then(() => {
         save2FASecret(userId, encryptWithKey(rawSecret, newKey));
       }
 
+      // Old backups must not stay readable with the previous master password
+      for (const backup of listAutoBackups(userId)) {
+        try {
+          const backupJson = decryptWithKey(readAutoBackup(userId, backup.name), oldKey);
+          writeAutoBackup(userId, backup.name, encryptWithKey(backupJson, newKey));
+        } catch (e) {
+          console.error('Backup re-encryption skipped:', backup.name);
+        }
+      }
+
       currentKey = newKey;
       oldKey.key.fill(0);
       return { success: true };
@@ -784,6 +701,129 @@ app.whenReady().then(() => {
       console.error('Change password error:', err.message);
       return { success: false, error: 'Şifre değiştirme hatası: ' + err.message };
     }
+  });
+
+  // --- Encrypted backups ---
+  const MAX_BACKUP_FILE_BYTES = 50 * 1024 * 1024;
+  const BACKUP_FILTERS = [
+    { name: 'Orenda Pass Yedeği', extensions: ['opbackup', 'enc'] },
+    { name: 'Tüm Dosyalar', extensions: ['*'] }
+  ];
+
+  // Accepts both exported backups ({ items: [...] }) and raw vault files ([...])
+  function parseBackupText(text) {
+    const parsed = JSON.parse(text);
+    const items = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.items) ? parsed.items : null);
+    if (!items) throw new Error('Geçersiz yedek içeriği.');
+    return {
+      items: items.filter(item => typeof item === 'object' && item !== null && !Array.isArray(item)),
+      exportedAt: !Array.isArray(parsed) && typeof parsed.exportedAt === 'string' ? parsed.exportedAt : null
+    };
+  }
+
+  // The current vault is snapshotted before a backup is handed over for restoring
+  function backupOpened(result) {
+    pendingBackup = null;
+    try {
+      createAutoBackup(currentUserId);
+    } catch (e) {
+      console.error('Auto backup error:', e.message);
+    }
+    return { success: true, ...result };
+  }
+
+  handle('export-encrypted-backup', async () => {
+    if (!currentUserId || !currentKey) return { success: false, error: 'Oturum açık değil.' };
+
+    try {
+      const items = JSON.parse(decryptWithKey(readUserEncryptedData(currentUserId), currentKey));
+      const payload = JSON.stringify({
+        app: 'OrendaPass',
+        type: 'backup',
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        items
+      });
+      // Encrypt before the dialog opens: the vault may auto-lock while it is on screen
+      const encryptedBuffer = encryptWithKey(payload, currentKey);
+
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const result = await dialog.showSaveDialog(win, {
+        defaultPath: path.join(app.getPath('documents'), `orenda-pass-yedek-${dateStr}.opbackup`),
+        filters: BACKUP_FILTERS
+      });
+      if (result.canceled || !result.filePath) return { success: false, canceled: true };
+
+      fs.writeFileSync(result.filePath, encryptedBuffer);
+      return { success: true, count: items.length };
+    } catch (err) {
+      console.error('Backup export error:', err.message);
+      return { success: false, error: 'Yedek oluşturulamadı: ' + err.message };
+    }
+  });
+
+  handle('list-auto-backups', () => {
+    if (!currentUserId || !currentKey) return [];
+    try {
+      return listAutoBackups(currentUserId);
+    } catch (e) {
+      return [];
+    }
+  });
+
+  // Opens a backup for restoring: an automatic one by name, or a file picked by the user
+  handle('open-backup', async (event, autoBackupName) => {
+    if (!currentUserId || !currentKey) return { success: false, error: 'Oturum açık değil.' };
+    const userId = currentUserId;
+    pendingBackup = null;
+
+    let data;
+    try {
+      if (typeof autoBackupName === 'string') {
+        data = readAutoBackup(userId, autoBackupName);
+      } else {
+        const result = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: BACKUP_FILTERS });
+        if (result.canceled || result.filePaths.length === 0) return { success: false, canceled: true };
+        if (fs.statSync(result.filePaths[0]).size > MAX_BACKUP_FILE_BYTES) {
+          return { success: false, error: 'Yedek dosyası çok büyük.' };
+        }
+        data = fs.readFileSync(result.filePaths[0]);
+      }
+    } catch (err) {
+      return { success: false, error: 'Yedek dosyası okunamadı.' };
+    }
+
+    if (currentUserId !== userId || !currentKey) return { success: false, error: 'Oturum açık değil.' };
+
+    try {
+      return backupOpened(parseBackupText(decryptWithKey(data, currentKey)));
+    } catch (e) {
+      // Encrypted with another master password (older password, other account or other computer)
+      pendingBackup = { userId, data };
+      return { success: false, needsPassword: true };
+    }
+  });
+
+  handle('unlock-backup', async (event, password) => {
+    if (!currentUserId || !currentKey) return { success: false, error: 'Oturum açık değil.' };
+    if (!pendingBackup || pendingBackup.userId !== currentUserId) {
+      return { success: false, error: 'Lütfen yedek dosyasını tekrar seçin.' };
+    }
+    const pending = pendingBackup;
+
+    try {
+      const { text } = await decryptWithPassword(pending.data, password);
+      const result = parseBackupText(text);
+      if (pendingBackup !== pending || !currentUserId) return { success: false, error: 'Oturum açık değil.' };
+      return backupOpened(result);
+    } catch (e) {
+      return { success: false, needsPassword: true, error: 'Yedek şifresi hatalı veya dosya bozuk.' };
+    }
+  });
+
+  handle('cancel-backup', () => {
+    pendingBackup = null;
+    return true;
   });
 
   handle('logout', () => {

@@ -2663,6 +2663,27 @@ button {
 .import-preview-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+}
+
+.auto-backup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.auto-backup-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.auto-backup-empty {
+  font-size: 0.82rem;
+  color: var(--text-muted);
 }
 
 /* ============================================

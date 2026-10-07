@@ -36,13 +36,6 @@ const UserIcon = () => (
     </svg>
 );
 
-const MailIcon = () => (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-        <polyline points="22,6 12,13 2,6" />
-    </svg>
-);
-
 const ShieldAlertIcon = () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -80,20 +73,12 @@ function Login({ onLogin, texts, notice }) {
     // Mode: Login vs Register
     const [isRegisterMode, setIsRegisterMode] = useState(false);
 
-    // Registration Form Inputs: First name, Last name, Email, Password, Confirm Password
+    // Registration Form Inputs: First name, Last name, Password, Confirm Password
     const [firstName, setFirstName] = useState('');
     const [lastName, setLastName] = useState('');
-    const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
     const [acknowledgedWarning, setAcknowledgedWarning] = useState(false);
-
-    // Email Verification Step State
-    const [isEmailVerifyStep, setIsEmailVerifyStep] = useState(false);
-    const [verificationCode, setVerificationCode] = useState('');
-    const [simulatedCode, setSimulatedCode] = useState('');
-    const [resendCooldown, setResendCooldown] = useState(0);
-    const resendTimerRef = useRef(null);
 
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
@@ -156,31 +141,8 @@ function Login({ onLogin, texts, notice }) {
             if (lockoutTimerRef.current) {
                 clearInterval(lockoutTimerRef.current);
             }
-            if (resendTimerRef.current) {
-                clearInterval(resendTimerRef.current);
-            }
         };
     }, []);
-
-    // Resend cooldown timer
-    useEffect(() => {
-        if (resendCooldown > 0) {
-            resendTimerRef.current = setInterval(() => {
-                setResendCooldown(prev => {
-                    if (prev <= 1) {
-                        clearInterval(resendTimerRef.current);
-                        return 0;
-                    }
-                    return prev - 1;
-                });
-            }, 1000);
-        }
-        return () => {
-            if (resendTimerRef.current) {
-                clearInterval(resendTimerRef.current);
-            }
-        };
-    }, [resendCooldown]);
 
     const startLockoutCountdown = (seconds) => {
         setIsLocked(true);
@@ -303,8 +265,8 @@ function Login({ onLogin, texts, notice }) {
         setError('');
     };
 
-    // --- STEP 1: REQUEST EMAIL VERIFICATION CODE ---
-    const handleRequestVerificationCode = async (e) => {
+    // --- REGISTER HANDLER ---
+    const handleRegister = async (e) => {
         e.preventDefault();
         if (!window.electronAPI) {
             setError("Electron API bulunamadı.");
@@ -313,7 +275,6 @@ function Login({ onLogin, texts, notice }) {
 
         const trimmedFirst = firstName.trim();
         const trimmedLast = lastName.trim();
-        const trimmedEmail = email.trim().toLowerCase();
 
         if (!trimmedFirst) {
             setError(texts.placeholderFirstName || 'Lütfen isminizi girin.');
@@ -321,10 +282,6 @@ function Login({ onLogin, texts, notice }) {
         }
         if (!trimmedLast) {
             setError(texts.placeholderLastName || 'Lütfen soyisminizi girin.');
-            return;
-        }
-        if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-            setError(texts.placeholderEmail || 'Lütfen geçerli bir e-posta adresi girin.');
             return;
         }
         if (password.length < 8) {
@@ -344,72 +301,10 @@ function Login({ onLogin, texts, notice }) {
         setError('');
 
         try {
-            const res = await window.electronAPI.sendEmailCode({
-                email: trimmedEmail,
-                firstName: trimmedFirst,
-                lastName: trimmedLast
-            });
-
-            if (res.success) {
-                setSimulatedCode(res.codePreview || '');
-                setIsEmailVerifyStep(true);
-                setResendCooldown(60);
-                setVerificationCode('');
-            } else {
-                setError(res.error || 'Doğrulama kodu gönderilemedi.');
-            }
-        } catch (err) {
-            setError(err.message);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    // Resend code handler
-    const handleResendCode = async () => {
-        if (resendCooldown > 0 || loading) return;
-        setLoading(true);
-        setError('');
-        try {
-            const res = await window.electronAPI.sendEmailCode({
-                email: email.trim().toLowerCase(),
-                firstName: firstName.trim(),
-                lastName: lastName.trim()
-            });
-            if (res.success) {
-                setSimulatedCode(res.codePreview || '');
-                setResendCooldown(60);
-            } else {
-                setError(res.error || 'Kod tekrar gönderilemedi.');
-            }
-        } catch (err) {
-            setError(err.message);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    // --- STEP 2: VERIFY CODE AND FINALIZE REGISTRATION ---
-    const handleFinalRegister = async (e) => {
-        e.preventDefault();
-        if (!window.electronAPI) return;
-
-        const cleanCode = verificationCode.trim();
-        if (cleanCode.length < 6) {
-            setError('Lütfen 6 haneli doğrulama kodunu eksiksiz girin.');
-            return;
-        }
-
-        setLoading(true);
-        setError('');
-
-        try {
             const res = await window.electronAPI.register({
-                firstName: firstName.trim(),
-                lastName: lastName.trim(),
-                email: email.trim().toLowerCase(),
-                password,
-                code: cleanCode
+                firstName: trimmedFirst,
+                lastName: trimmedLast,
+                password
             });
 
             if (res.success) {
@@ -438,8 +333,6 @@ function Login({ onLogin, texts, notice }) {
                         <LockIcon />
                     ) : is2FAStep ? (
                         <KeyIcon />
-                    ) : isRegisterMode && isEmailVerifyStep ? (
-                        <MailIcon />
                     ) : isRegisterMode ? (
                         <UserPlusIcon />
                     ) : (
@@ -500,85 +393,8 @@ function Login({ onLogin, texts, notice }) {
                             </button>
                         </form>
                     </div>
-                ) : isRegisterMode && isEmailVerifyStep ? (
-                    /* STEP 2: EMAIL VERIFICATION SCREEN */
-                    <div>
-                        <h2>{texts.stepEmailVerify || 'E-posta Doğrulaması'}</h2>
-                        <p className="email-verify-info">
-                            <strong>{email}</strong> {texts.stepEmailVerifyDesc || 'adresine 6 haneli bir doğrulama kodu gönderildi.'}
-                        </p>
-
-                        {/* Windows Notification / Local Simulated Code Badge */}
-                        {simulatedCode && (
-                            <div className="simulated-code-badge">
-                                <div className="simulated-code-info">
-                                    <span className="simulated-code-label">📬 {texts.simulationCodeBadge}</span>
-                                    <strong className="simulated-code-number">{simulatedCode}</strong>
-                                </div>
-                                <button
-                                    type="button"
-                                    className="simulated-code-fill-btn"
-                                    onClick={() => setVerificationCode(simulatedCode)}
-                                >
-                                    {texts.genUse || 'Kodu Doldur'}
-                                </button>
-                            </div>
-                        )}
-
-                        <form onSubmit={handleFinalRegister}>
-                            <div className="input-group">
-                                <label className="input-label">{texts.labelVerificationCode || 'Doğrulama Kodu'}</label>
-                                <input
-                                    type="text"
-                                    inputMode="numeric"
-                                    pattern="[0-9]*"
-                                    maxLength="6"
-                                    placeholder=""
-                                    value={verificationCode}
-                                    onChange={e => setVerificationCode(e.target.value.replace(/[^0-9]/g, ''))}
-                                    autoFocus
-                                    className="verification-code-input"
-                                    required
-                                />
-                            </div>
-
-                            {error && <div className="error-message">{error}</div>}
-
-                            <button
-                                type="submit"
-                                disabled={loading || verificationCode.length < 6}
-                                className="btn-primary"
-                            >
-                                {loading ? texts.updating : (texts.btnVerifyAndRegister || 'Kodu Doğrula ve Hesabı Aç')}
-                            </button>
-
-                            <div className="verify-actions-row">
-                                <button
-                                    type="button"
-                                    className="btn-ghost-sm"
-                                    disabled={resendCooldown > 0 || loading}
-                                    onClick={handleResendCode}
-                                >
-                                    {resendCooldown > 0
-                                        ? `${texts.btnResendCode || 'Tekrar Gönder'} (${resendCooldown}s)`
-                                        : (texts.btnResendCode || 'Tekrar Kod Gönder')}
-                                </button>
-
-                                <button
-                                    type="button"
-                                    className="btn-ghost-sm"
-                                    onClick={() => {
-                                        setIsEmailVerifyStep(false);
-                                        setError('');
-                                    }}
-                                >
-                                    {texts.changeInfoBtn || '← Bilgileri Düzenle'}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
                 ) : (
-                    /* STEP 1: LOGIN MODE OR REGISTER FORM */
+                    /* LOGIN MODE OR REGISTER FORM */
                     <div>
                         <h2>
                             {isRegisterMode
@@ -614,7 +430,7 @@ function Login({ onLogin, texts, notice }) {
                             </div>
                         )}
 
-                        <form onSubmit={isRegisterMode ? handleRequestVerificationCode : handleLogin}>
+                        <form onSubmit={isRegisterMode ? handleRegister : handleLogin}>
                             {/* REGISTER MODE FIELDS */}
                             {isRegisterMode ? (
                                 <>
@@ -640,23 +456,6 @@ function Login({ onLogin, texts, notice }) {
                                                 onChange={e => setLastName(e.target.value)}
                                                 required
                                             />
-                                        </div>
-                                    </div>
-
-                                    {/* EMAIL ADDRESS */}
-                                    <div className="input-group">
-                                        <label className="input-label">{texts.labelEmail || 'E-posta Adresi'}</label>
-                                        <div className="input-with-icon">
-                                            <input
-                                                type="email"
-                                                placeholder=""
-                                                value={email}
-                                                onChange={e => setEmail(e.target.value)}
-                                                required
-                                            />
-                                            <div className="input-trailing-icon">
-                                                <MailIcon />
-                                            </div>
                                         </div>
                                     </div>
                                 </>
@@ -808,7 +607,7 @@ function Login({ onLogin, texts, notice }) {
                                 {loading
                                     ? texts.updating
                                     : (isRegisterMode
-                                        ? (texts.btnSendCode || 'Devam Et & Doğrulama Kodu Gönder')
+                                        ? (texts.btnCreateAccount || 'Hesabı Oluştur')
                                         : texts.login)}
                             </button>
 
@@ -821,11 +620,9 @@ function Login({ onLogin, texts, notice }) {
                                         className="auth-link-btn"
                                         onClick={() => {
                                             setIsRegisterMode(true);
-                                            setIsEmailVerifyStep(false);
                                             setError('');
                                             setFirstName('');
                                             setLastName('');
-                                            setEmail('');
                                             setPassword('');
                                             setConfirmPassword('');
                                             setAcknowledgedWarning(false);
@@ -844,8 +641,7 @@ function Login({ onLogin, texts, notice }) {
                                             className="auth-link-btn"
                                             onClick={() => {
                                                 setIsRegisterMode(false);
-                                                setIsEmailVerifyStep(false);
-                                                setError('');
+                                                    setError('');
                                                 setPassword('');
                                                 setConfirmPassword('');
                                                 setAcknowledgedWarning(false);

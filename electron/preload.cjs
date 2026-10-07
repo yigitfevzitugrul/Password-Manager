@@ -5,8 +5,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     checkUser: () => ipcRenderer.invoke('check-user'),
     getUsers: () => ipcRenderer.invoke('get-users'),
     checkLockout: () => ipcRenderer.invoke('check-lockout'),
-    sendEmailCode: (data) => ipcRenderer.invoke('send-email-code', data),
-    verifyEmailCode: (data) => ipcRenderer.invoke('verify-email-code', data),
     register: (payload) => ipcRenderer.invoke('register', payload),
     login: (userId, password) => ipcRenderer.invoke('login', userId, password),
     verify2FALogin: (code) => ipcRenderer.invoke('verify-2fa-login', code),
@@ -19,6 +17,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     changePassword: (oldPw, newPw) => ipcRenderer.invoke('change-password', oldPw, newPw),
     logout: () => ipcRenderer.invoke('logout'),
     checkPwnedPassword: (password) => ipcRenderer.invoke('check-pwned-password', password),
+    exportEncryptedBackup: () => ipcRenderer.invoke('export-encrypted-backup'),
+    listAutoBackups: () => ipcRenderer.invoke('list-auto-backups'),
+    openBackup: (autoBackupName) => ipcRenderer.invoke('open-backup', autoBackupName),
+    unlockBackup: (password) => ipcRenderer.invoke('unlock-backup', password),
+    cancelBackup: () => ipcRenderer.invoke('cancel-backup'),
     copyToClipboard: (text) => ipcRenderer.invoke('copy-to-clipboard', text),
     onVaultLocked: (callback) => {
         const listener = () => callback();

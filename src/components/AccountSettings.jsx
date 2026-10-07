@@ -89,6 +89,28 @@ function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleThe
     const [importPreview, setImportPreview] = useState(null);
     const [importMsg, setImportMsg] = useState({ type: '', msg: '' });
 
+    // Encrypted Backup State
+    const [autoBackups, setAutoBackups] = useState([]);
+    const [backupPreview, setBackupPreview] = useState(null);
+    const [backupNeedsPassword, setBackupNeedsPassword] = useState(false);
+    const [backupPassword, setBackupPassword] = useState('');
+    const [backupError, setBackupError] = useState('');
+    const [backupBusy, setBackupBusy] = useState(false);
+    const backupDialogRef = useRef(null);
+
+    // The backup dialogs open below the cards: bring them into view
+    useEffect(() => {
+        if ((backupPreview || backupNeedsPassword) && backupDialogRef.current) {
+            backupDialogRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }, [backupPreview, backupNeedsPassword]);
+
+    const refreshAutoBackups = () => {
+        if (window.electronAPI && window.electronAPI.listAutoBackups) {
+            window.electronAPI.listAutoBackups().then(list => setAutoBackups(list || [])).catch(() => {});
+        }
+    };
+
     useEffect(() => {
         if (window.electronAPI) {
             if (window.electronAPI.getAppVersion) {
@@ -100,6 +122,7 @@ function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleThe
                 }).catch(() => {});
             }
         }
+        refreshAutoBackups();
     }, []);
 
     // Change Master Password
@@ -253,6 +276,100 @@ function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleThe
         setImportPreview(null);
     };
 
+    // Encrypted Backup: Export
+    const handleExportEncrypted = async () => {
+        setImportMsg({ type: '', msg: '' });
+        setBackupBusy(true);
+        try {
+            const res = await window.electronAPI.exportEncryptedBackup();
+            if (res.success) {
+                setImportMsg({ type: 'success', msg: texts.backupExportSuccess });
+            } else if (!res.canceled) {
+                setImportMsg({ type: 'error', msg: res.error });
+            }
+        } catch (err) {
+            setImportMsg({ type: 'error', msg: err.message });
+        } finally {
+            setBackupBusy(false);
+        }
+    };
+
+    const handleBackupResult = (res) => {
+        if (res.success) {
+            setBackupNeedsPassword(false);
+            setBackupPassword('');
+            setBackupError('');
+            if (res.items.length === 0) {
+                setImportMsg({ type: 'error', msg: texts.backupEmpty });
+            } else {
+                setBackupPreview(res.items);
+            }
+            refreshAutoBackups();
+        } else if (res.needsPassword) {
+            setBackupNeedsPassword(true);
+            setBackupError(res.error || '');
+        } else if (!res.canceled) {
+            setBackupNeedsPassword(false);
+            setImportMsg({ type: 'error', msg: res.error });
+        }
+    };
+
+    // Encrypted Backup: Open (file picked in the main process, or an automatic backup)
+    const handleOpenBackup = async (autoBackupName) => {
+        setImportMsg({ type: '', msg: '' });
+        setBackupError('');
+        setBackupPassword('');
+        setBackupBusy(true);
+        try {
+            handleBackupResult(await window.electronAPI.openBackup(autoBackupName));
+        } catch (err) {
+            setImportMsg({ type: 'error', msg: err.message });
+        } finally {
+            setBackupBusy(false);
+        }
+    };
+
+    const handleUnlockBackup = async (e) => {
+        e.preventDefault();
+        setBackupBusy(true);
+        try {
+            handleBackupResult(await window.electronAPI.unlockBackup(backupPassword));
+        } catch (err) {
+            setBackupError(err.message);
+        } finally {
+            setBackupBusy(false);
+        }
+    };
+
+    const handleCancelBackup = () => {
+        if (window.electronAPI.cancelBackup) window.electronAPI.cancelBackup();
+        setBackupNeedsPassword(false);
+        setBackupPassword('');
+        setBackupError('');
+        setBackupPreview(null);
+    };
+
+    // Encrypted Backup: Restore (replace the vault, or add the entries to it)
+    const handleRestoreBackup = (replace) => {
+        if (!backupPreview || backupPreview.length === 0) return;
+
+        const restored = replace
+            ? backupPreview.map(item => ({ ...item, id: item.id || uuidv4() }))
+            : [...passwords, ...backupPreview.map(item => ({ ...item, id: uuidv4() }))];
+        if (onSave) {
+            onSave(restored);
+        }
+
+        setImportMsg({
+            type: 'success',
+            msg: `${backupPreview.length} ${replace ? texts.backupRestoreSuccess : texts.importSuccess}`
+        });
+        setBackupPreview(null);
+    };
+
+    const formatBackupDate = (timestamp) =>
+        new Date(timestamp).toLocaleString(lang === 'tr' ? 'tr-TR' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+
     return (
         <div className="account-settings">
             <h2>{texts.settingsTitle}</h2>
@@ -395,6 +512,59 @@ function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleThe
                 )}
 
                 <div className="data-management-grid">
+                    {/* Encrypted Backup Card */}
+                    <div className="data-card">
+                        <div className="data-card-body">
+                            <h4>{texts.backupTitle}</h4>
+                            <p>{texts.backupDesc}</p>
+                        </div>
+                        <div className="data-actions-row">
+                            <button
+                                type="button"
+                                className="btn-data-action btn-data-primary"
+                                onClick={handleExportEncrypted}
+                                disabled={backupBusy}
+                            >
+                                <DownloadIcon /> {texts.backupExportBtn}
+                            </button>
+                            <button
+                                type="button"
+                                className="btn-data-action btn-data-secondary"
+                                onClick={() => handleOpenBackup()}
+                                disabled={backupBusy}
+                            >
+                                <UploadIcon /> {texts.backupRestoreBtn}
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Automatic Backups Card */}
+                    <div className="data-card">
+                        <div className="data-card-body">
+                            <h4>{texts.autoBackupTitle}</h4>
+                            <p>{texts.autoBackupDesc}</p>
+                        </div>
+                        {autoBackups.length === 0 ? (
+                            <p className="auto-backup-empty">{texts.autoBackupEmpty}</p>
+                        ) : (
+                            <div className="auto-backup-list">
+                                {autoBackups.map(backup => (
+                                    <div key={backup.name} className="auto-backup-row">
+                                        <span>{formatBackupDate(backup.createdAt)}</span>
+                                        <button
+                                            type="button"
+                                            className="btn-data-action btn-data-secondary"
+                                            onClick={() => handleOpenBackup(backup.name)}
+                                            disabled={backupBusy}
+                                        >
+                                            {texts.autoBackupRestoreBtn}
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
                     {/* Export Card */}
                     <div className="data-card">
                         <div className="data-card-body">
@@ -447,6 +617,72 @@ function AccountSettings({ currentUser, passwords = [], onSave, theme, toggleThe
                         </div>
                     </div>
                 </div>
+
+                {/* Backup Password Prompt (backup encrypted with a different master password) */}
+                {backupNeedsPassword && (
+                    <div className="import-preview-modal" ref={backupDialogRef}>
+                        <form className="import-preview-card" onSubmit={handleUnlockBackup}>
+                            <h4>{texts.backupPasswordTitle}</h4>
+                            <p>{texts.backupPasswordDesc}</p>
+                            <div className="input-group">
+                                <input
+                                    type="password"
+                                    placeholder={texts.masterPassword}
+                                    value={backupPassword}
+                                    onChange={e => setBackupPassword(e.target.value)}
+                                    autoFocus
+                                    required
+                                />
+                            </div>
+                            {backupError && <div className="status-message error">{backupError}</div>}
+                            <div className="import-preview-actions">
+                                <button type="submit" className="btn-data-action btn-data-primary" disabled={backupBusy}>
+                                    {backupBusy ? texts.updating : texts.backupUnlockBtn}
+                                </button>
+                                <button type="button" className="btn-data-action btn-data-secondary" onClick={handleCancelBackup}>
+                                    {texts.btnCancel}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                )}
+
+                {/* Backup Restore Confirmation Dialog */}
+                {backupPreview && (
+                    <div className="import-preview-modal" ref={backupDialogRef}>
+                        <div className="import-preview-card">
+                            <h4>{texts.backupRestoreTitle}</h4>
+                            <p>
+                                <strong>{backupPreview.length}</strong> {texts.backupRestoreMsg}
+                            </p>
+                            <div className="import-items-preview">
+                                {backupPreview.slice(0, 5).map((item, idx) => (
+                                    <div key={idx} className="import-preview-row">
+                                        <span>• {item.title || 'İsimsiz'}</span>
+                                        <span className="sub">{item.username || '-'}</span>
+                                    </div>
+                                ))}
+                                {backupPreview.length > 5 && (
+                                    <div className="import-preview-more">
+                                        + {backupPreview.length - 5} kayıt daha...
+                                    </div>
+                                )}
+                            </div>
+                            <p className="warning-text">{texts.backupReplaceWarning.replace('{count}', passwords.length)}</p>
+                            <div className="import-preview-actions">
+                                <button className="btn-data-action btn-data-primary" onClick={() => handleRestoreBackup(true)}>
+                                    {texts.backupReplaceBtn}
+                                </button>
+                                <button className="btn-data-action btn-data-secondary" onClick={() => handleRestoreBackup(false)}>
+                                    {texts.backupMergeBtn}
+                                </button>
+                                <button className="btn-data-action btn-data-secondary" onClick={handleCancelBackup}>
+                                    {texts.btnCancel}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* Import Preview Confirmation Dialog */}
                 {importPreview && (
