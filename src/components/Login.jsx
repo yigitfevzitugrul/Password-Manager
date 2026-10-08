@@ -96,6 +96,10 @@ function Login({ onLogin, texts, notice }) {
     const [is2FAStep, setIs2FAStep] = useState(false);
     const [twoFACode, setTwoFACode] = useState('');
 
+    // Adding an account that already exists on another device (through its sync folder)
+    const [isJoinMode, setIsJoinMode] = useState(false);
+    const [joinPassword, setJoinPassword] = useState('');
+
     // Quick unlock with PIN after an automatic lock
     const [quickUnlock, setQuickUnlock] = useState(null);
     const [quickPin, setQuickPin] = useState('');
@@ -254,6 +258,47 @@ function Login({ onLogin, texts, notice }) {
         }
     };
 
+    // --- ADD THE ACCOUNT FROM ANOTHER DEVICE ---
+    // The folder (and, if the account uses one, the key file) is asked for by the main process.
+    const handleJoinSyncedAccount = async (e) => {
+        e.preventDefault();
+        if (!window.electronAPI || !window.electronAPI.joinSyncedAccount) return;
+
+        setLoading(true);
+        setError('');
+
+        try {
+            const res = await window.electronAPI.joinSyncedAccount(joinPassword);
+            if (res.success) {
+                onLogin(res.data || [], res.user, res.revision);
+            } else if (!res.canceled) {
+                setError(res.error || 'Hesap eklenemedi.');
+            }
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const openJoinMode = () => {
+        setIsJoinMode(true);
+        setJoinPassword('');
+        setPassword('');
+        setConfirmPassword('');
+        setError('');
+    };
+
+    const joinAccountLink = (
+        <div className="auth-switch-footer">
+            <span className="auth-switch-text">{texts ? texts.joinAccountQuestion : ''}</span>
+            <button type="button" className="auth-link-btn" onClick={openJoinMode}>
+                <UserIcon />
+                <span>{texts ? texts.joinAccountLink : ''}</span>
+            </button>
+        </div>
+    );
+
     const handleSelectKeyFile = async () => {
         if (!window.electronAPI || !window.electronAPI.selectKeyFile) return;
         try {
@@ -406,8 +451,46 @@ function Login({ onLogin, texts, notice }) {
                     )}
                 </div>
 
-                {/* QUICK UNLOCK SCREEN (AFTER AN AUTOMATIC LOCK, FOR USERS WITH A PIN) */}
-                {quickUnlock && !is2FAStep && !isRegisterMode ? (
+                {/* ADD AN ACCOUNT THAT ALREADY EXISTS ON ANOTHER DEVICE */}
+                {isJoinMode ? (
+                    <div>
+                        <h2>{texts.joinAccountTitle}</h2>
+                        <p>{texts.joinAccountDesc}</p>
+
+                        <form onSubmit={handleJoinSyncedAccount}>
+                            <div className="input-group">
+                                <label className="input-label">{texts.masterPassword || 'Ana Şifre'}</label>
+                                <input
+                                    type="password"
+                                    placeholder=""
+                                    value={joinPassword}
+                                    onChange={e => setJoinPassword(e.target.value)}
+                                    autoFocus
+                                    required
+                                />
+                            </div>
+
+                            {error && <div className="error-message">{error}</div>}
+
+                            <button type="submit" disabled={loading || !joinPassword} className="btn-primary">
+                                {loading ? texts.updating : texts.joinAccountBtn}
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setIsJoinMode(false);
+                                    setJoinPassword('');
+                                    setError('');
+                                }}
+                                className="btn-secondary"
+                                style={{ marginTop: '0.75rem', width: '100%' }}
+                            >
+                                {texts.twoFactorBackBtn}
+                            </button>
+                        </form>
+                    </div>
+                ) : quickUnlock && !is2FAStep && !isRegisterMode ? (
                     <div>
                         <h2>{texts.quickUnlockTitle}</h2>
                         <p><strong>{quickUnlock.username}</strong> — {texts.quickUnlockDesc}</p>
@@ -762,6 +845,8 @@ function Login({ onLogin, texts, notice }) {
                                     </div>
                                 )
                             )}
+
+                            {joinAccountLink}
                         </form>
                     </div>
                 )}

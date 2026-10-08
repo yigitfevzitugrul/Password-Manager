@@ -278,3 +278,71 @@ test('devices sharing a folder converge', async () => {
 
     for (const device of [desktop, phone, tablet, stranger, late]) device.lock(false);
 });
+
+test('an account is added to a new device from the sync folder, without creating a second account', async () => {
+    const cloud = createCloud();
+    const external = new Map(); // where key files are saved; reachable from every device here
+    const userId = async (device) => (await device.api.getUsers()).users[0].id;
+
+    const desktop = createDevice(nodePrimitives, { cloud, external, deviceName: 'Masaüstü' });
+    desktop.ui.opened(await desktop.api.register({ firstName: 'Yiğit', lastName: 'Tuğrul', password: PASSWORD }));
+    await desktop.ui.save([entry('a1'), entry('a2')]);
+    desktop.host.folder = '/bulut/kasa';
+    assert.equal((await desktop.api.enableSync(PASSWORD)).success, true);
+
+    // --- a brand new device: no account is registered on it ---
+    const phone = createDevice(noblePrimitives, { cloud, external, deviceName: 'Telefon' });
+    assert.equal((await phone.api.joinSyncedAccount(PASSWORD)).canceled, true, 'folder dialog canceled');
+    phone.host.folder = '/bulut/bos-klasor';
+    assert.match((await phone.api.joinSyncedAccount(PASSWORD)).error, /bulunamadı/);
+    phone.host.folder = '/bulut/kasa';
+    let result = await phone.api.joinSyncedAccount('yanlis-sifre-123');
+    assert.deepEqual([result.success, result.error], [false, 'Ana şifre hatalı.']);
+    assert.equal(phone.api.checkUser(), false, 'no account is created for a wrong password');
+    assert.equal(phone.api.checkLockout().attempts, 1);
+
+    result = await phone.api.joinSyncedAccount(PASSWORD);
+    assert.equal(result.success, true, result.error);
+    assert.equal(result.user.username, 'Yiğit Tuğrul', 'the account has the name it has on the other device');
+    assert.deepEqual(ids(result.data), ['a1', 'a2']);
+    assert.equal(result.syncError, null);
+    phone.ui.opened(result);
+    assert.deepEqual((await phone.api.getUsers()).users.map(u => u.username), ['Yiğit Tuğrul']);
+    assert.equal(phone.api.getSyncStatus().enabled, true);
+
+    // it is the same vault from now on, in both directions
+    await phone.ui.save([...phone.ui.items, entry('telefonda')]);
+    await phone.api.syncNow();
+    await desktop.api.syncNow();
+    assert.deepEqual(ids(desktop.ui.items), ['a1', 'a2', 'telefonda']);
+    assert.deepEqual(desktop.api.getSyncStatus().devices.map(d => d.name), ['Telefon']);
+
+    // and a normal account on the new device: it opens with the master password
+    phone.api.logout();
+    assert.equal((await phone.api.login(await userId(phone), 'yanlis-sifre-123')).success, false);
+    assert.deepEqual(ids((await phone.api.login(await userId(phone), PASSWORD)).data), ['a1', 'a2', 'telefonda']);
+
+    // adding it a second time does not overwrite the first copy
+    result = await phone.api.joinSyncedAccount(PASSWORD);
+    assert.equal(result.user.username, 'Yiğit Tuğrul (2)');
+    assert.equal((await phone.api.getUsers()).users.length, 2);
+
+    // --- an account protected by a key file needs that key file on the new device too ---
+    const keyFile = await desktop.api.enableKeyFile(PASSWORD);
+    assert.equal(keyFile.success, true, keyFile.error);
+    const tablet = createDevice(nodePrimitives, { cloud, external, deviceName: 'Tablet' });
+    tablet.host.folder = '/bulut/kasa';
+    result = await tablet.api.joinSyncedAccount(PASSWORD); // key file dialog canceled
+    assert.deepEqual([result.success, result.error], [false, 'Bu hesap için anahtar dosyası gerekiyor.']);
+    assert.equal(tablet.api.checkUser(), false);
+
+    tablet.host.pick = keyFile.path;
+    result = await tablet.api.joinSyncedAccount(PASSWORD);
+    assert.equal(result.success, true, result.error);
+    assert.deepEqual(ids(result.data), ['a1', 'a2', 'telefonda']);
+    assert.deepEqual(tablet.api.getKeyFileStatus(), { enabled: true, path: keyFile.path });
+    tablet.api.logout();
+    assert.deepEqual(ids((await tablet.api.login(await userId(tablet), PASSWORD)).data), ['a1', 'a2', 'telefonda']);
+
+    for (const device of [desktop, phone, tablet]) device.lock(false);
+});

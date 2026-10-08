@@ -40,6 +40,7 @@ const API_METHODS = [
     'setClipboardClearSeconds',
     'getSyncStatus',
     'enableSync',
+    'joinSyncedAccount',
     'syncNow',
     'disableSync'
 ];

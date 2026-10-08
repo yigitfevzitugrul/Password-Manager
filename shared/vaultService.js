@@ -1161,6 +1161,7 @@ export function createVaultService({ primitives, storage, platform }) {
 
     // The keyring lets a new device obtain the sync key with the master password (and key file)
     async function writeKeyring(state, masterPassword, keyFileSecret) {
+        const user = store.getUsersList().users.find(u => u.id === currentUserId) || {};
         const keyMaterial = await createKey(masterPassword, keyFileSecret ? copyBytes(keyFileSecret) : null);
         const encrypted = encryptWithKey(JSON.stringify({
             app: 'OrendaPass',
@@ -1168,10 +1169,58 @@ export function createVaultService({ primitives, storage, platform }) {
             version: 1,
             vaultId: state.vaultId,
             key: bytesToBase64(state.key),
-            salt: bytesToBase64(state.salt)
+            salt: bytesToBase64(state.salt),
+            // lets another device add this account under the same name
+            account: { username: str(user.username), firstName: str(user.firstName), lastName: str(user.lastName) }
         }), keyMaterial);
         wipeKey(keyMaterial);
         await platform.writeFolderFile(state.folder, keyringName(state.vaultId), encrypted);
+    }
+
+    // Looks for a keyring in the folder that the master password (and key file) opens.
+    // keyFileNeeded: a keyring exists that wants a key file and none was given.
+    async function openKeyring(folder, masterPassword, keyFileSecret) {
+        const keyrings = (await platform.listFolder(folder))
+            .filter(entry => KEYRING_PATTERN.test(entry.name) && entry.size <= MAX_KEYRING_BYTES);
+        let keyFileNeeded = false;
+        for (const entry of keyrings) {
+            try {
+                const data = await platform.readFolderFile(folder, entry.name, MAX_KEYRING_BYTES);
+                const secret = keyFileSecret ? copyBytes(keyFileSecret) : null;
+                const parsed = JSON.parse((await decryptWithPassword(data, masterPassword, secret)).text);
+                if (parsed.type !== 'sync-keyring' || parsed.vaultId !== KEYRING_PATTERN.exec(entry.name)[1]) continue;
+                return {
+                    count: keyrings.length,
+                    keyFileNeeded: false,
+                    found: {
+                        vaultId: parsed.vaultId,
+                        key: base64ToBytes(parsed.key),
+                        salt: base64ToBytes(parsed.salt),
+                        usesKeyFile: requiresKeyFile(data),
+                        account: typeof parsed.account === 'object' && parsed.account !== null ? parsed.account : {}
+                    }
+                };
+            } catch (e) {
+                // protected by another master password or key file
+                if (e.code === 'KEYFILE_REQUIRED') keyFileNeeded = true;
+            }
+        }
+        return { count: keyrings.length, keyFileNeeded, found: null };
+    }
+
+    function newSyncState(folder, found) {
+        return {
+            vaultId: found ? found.vaultId : bytesToHex(primitives.randomBytes(8)),
+            deviceId: bytesToHex(primitives.randomBytes(8)),
+            folder,
+            key: found ? found.key : primitives.randomBytes(32),
+            salt: found ? found.salt : primitives.randomBytes(32),
+            tombstones: {},
+            seen: new Map(),
+            lastWritten: null,
+            lastSyncAt: null,
+            error: null
+        };
     }
 
     // After the master password or the key file changed: new devices must join with the current ones
@@ -1203,23 +1252,9 @@ export function createVaultService({ primitives, storage, platform }) {
             const folder = picked.path;
 
             // Join the sync that already lives in this folder, if the master password opens its keyring
-            const keyrings = (await platform.listFolder(folder))
-                .filter(entry => KEYRING_PATTERN.test(entry.name) && entry.size <= MAX_KEYRING_BYTES);
-            let found = null;
-            for (const entry of keyrings) {
-                try {
-                    const data = await platform.readFolderFile(folder, entry.name, MAX_KEYRING_BYTES);
-                    const keyFileSecret = sessionKey.keyFileSecret ? copyBytes(sessionKey.keyFileSecret) : null;
-                    const parsed = JSON.parse((await decryptWithPassword(data, masterPassword, keyFileSecret)).text);
-                    if (parsed.type !== 'sync-keyring' || parsed.vaultId !== KEYRING_PATTERN.exec(entry.name)[1]) continue;
-                    found = { vaultId: parsed.vaultId, key: base64ToBytes(parsed.key), salt: base64ToBytes(parsed.salt) };
-                    break;
-                } catch (e) {
-                    // protected by another master password or key file
-                }
-            }
+            const { found, count } = await openKeyring(folder, masterPassword, sessionKey.keyFileSecret);
             if (sessionChanged()) return { success: false, error: 'Oturum açık değil.' };
-            if (!found && keyrings.length > 0) {
+            if (!found && count > 0) {
                 return {
                     success: false,
                     error: 'Bu klasördeki eşitleme verisi farklı bir ana şifreyle veya anahtar dosyasıyla korunuyor. ' +
@@ -1227,18 +1262,7 @@ export function createVaultService({ primitives, storage, platform }) {
                 };
             }
 
-            const state = {
-                vaultId: found ? found.vaultId : bytesToHex(primitives.randomBytes(8)),
-                deviceId: bytesToHex(primitives.randomBytes(8)),
-                folder,
-                key: found ? found.key : primitives.randomBytes(32),
-                salt: found ? found.salt : primitives.randomBytes(32),
-                tombstones: {},
-                seen: new Map(),
-                lastWritten: null,
-                lastSyncAt: null,
-                error: null
-            };
+            const state = newSyncState(folder, found);
             if (!found) {
                 await writeKeyring(state, masterPassword, sessionKey.keyFileSecret);
                 if (sessionChanged()) return { success: false, error: 'Oturum açık değil.' };
@@ -1252,6 +1276,99 @@ export function createVaultService({ primitives, storage, platform }) {
         } catch (err) {
             console.error('Enable sync error:', err.message);
             return { success: false, error: 'Eşitleme açılamadı: ' + err.message };
+        }
+    };
+
+    // Login screen: "my account is already on another device". Creates the account on this device
+    // from the sync folder: same name, same master password (and key file), same entries.
+    api.joinSyncedAccount = async (masterPassword) => {
+        const now = Date.now();
+        if (now < lockoutUntil) {
+            const remainingSeconds = Math.ceil((lockoutUntil - now) / 1000);
+            return { success: false, error: `Çok fazla hatalı deneme. ${remainingSeconds} saniye bekleyin.` };
+        }
+        if (typeof masterPassword !== 'string' || masterPassword.length === 0 ||
+            masterPassword.length > MAX_MASTER_PASSWORD_LENGTH) {
+            return { success: false, error: 'Lütfen ana şifrenizi girin.' };
+        }
+
+        try {
+            const picked = await platform.pickFolder({ title: 'Diğer cihazınızda seçtiğiniz eşitleme klasörünü seçin' });
+            if (picked.canceled) return { success: false, canceled: true };
+            const folder = picked.path;
+
+            let keyFileSecret = null;
+            let keyFilePath = null;
+            let opened = await openKeyring(folder, masterPassword, null);
+            if (opened.count === 0) {
+                return {
+                    success: false,
+                    error: 'Bu klasörde eşitleme verisi bulunamadı. Diğer cihazınızda eşitlemeyi açarken seçtiğiniz klasörü seçin.'
+                };
+            }
+            if (!opened.found && opened.keyFileNeeded) {
+                // The account is protected by a key file on the other device: it is needed here too
+                const keyFile = await platform.openFile({
+                    title: 'Bu hesabın anahtar dosyasını seçin',
+                    filters: KEY_FILE_FILTERS,
+                    maxBytes: MAX_KEY_FILE_BYTES
+                });
+                if (keyFile.canceled) return { success: false, error: 'Bu hesap için anahtar dosyası gerekiyor.' };
+                if (keyFile.tooLarge) return { success: false, error: 'Geçersiz anahtar dosyası.' };
+                keyFileSecret = parseKeyFile(keyFile.data);
+                keyFilePath = keyFile.path;
+                opened = await openKeyring(folder, masterPassword, keyFileSecret);
+            }
+            if (!opened.found) {
+                registerFailedAttempt();
+                return {
+                    success: false,
+                    error: keyFileSecret ? 'Ana şifre veya anahtar dosyası hatalı.' : 'Ana şifre hatalı.'
+                };
+            }
+            const found = opened.found;
+            if (!found.usesKeyFile) {
+                keyFileSecret = null;
+                keyFilePath = null;
+            }
+
+            // The account gets the name it has on the other device (made unique on this one if needed)
+            const existing = store.getUsersList().users.map(u => u.username.toLowerCase());
+            const accountName = str(found.account.username).trim().slice(0, 130) || 'Eşitlenen Hesap';
+            let username = accountName;
+            for (let n = 2; existing.includes(username.toLowerCase()); n++) username = `${accountName} (${n})`;
+
+            const keyMaterial = await createKey(masterPassword, keyFileSecret);
+            const newUser = store.createNewUser({
+                username,
+                firstName: str(found.account.firstName).slice(0, 64),
+                lastName: str(found.account.lastName).slice(0, 64)
+            });
+            store.writeVault(newUser.id, encryptWithKey(JSON.stringify([]), keyMaterial));
+            if (keyFilePath) store.setUserKeyFilePath(newUser.id, keyFilePath);
+
+            lockVault(false);
+            openSession(newUser.id, keyMaterial, []);
+            loginAttempts = 0;
+            lockoutUntil = 0;
+
+            sync = newSyncState(folder, found);
+            saveSync();
+            const firstSync = await runSync();
+            if (currentUserId !== newUser.id || sessionItems === null) {
+                return { success: false, error: 'Oturum açık değil.' };
+            }
+
+            return {
+                success: true,
+                user: { id: newUser.id, username: newUser.username },
+                data: sessionItems,
+                revision: rememberUiState(sessionItems),
+                syncError: firstSync.success ? null : firstSync.error
+            };
+        } catch (err) {
+            console.error('Join synced account error:', err.message);
+            return { success: false, error: 'Hesap eklenemedi: ' + err.message };
         }
     };
 
