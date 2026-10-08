@@ -174,6 +174,20 @@ Two-factor authentication configuration, streamlined JSON & CSV backup actions, 
    ```
    *(Generates a stand-alone `.exe` installer inside the `dist-electron/` directory.)*
 
+5. **Run the tests:**
+   ```bash
+   npm test
+   npm run test:e2e
+   ```
+   *(`npm test` checks the vault format and logic on every platform's crypto implementation. `npm run test:e2e` starts the real app with a throwaway data folder and drives it end to end; it uses the system clipboard while it runs.)*
+
+### Code Layout
+
+- `shared/` — vault format, encryption and all vault logic. Platform independent, so the desktop app and the upcoming mobile apps read and write exactly the same files.
+- `electron/` — the desktop shell: window, security settings and the Node-based crypto, storage and dialogs the shared code runs on.
+- `src/` — the React user interface.
+- `tests/` — unit tests (`tests/unit`) and end-to-end tests (`tests/e2e`).
+
 ---
 
 ## 🛠️ Technology Stack

@@ -174,6 +174,20 @@ Karakter türlerine göre renklendirilmiş önizleme, bit entropisi göstergesi 
    ```
    *(`dist-electron/` dizini altında Windows `.exe` kurulum dosyası üretilir.)*
 
+5. **Testleri çalıştırın:**
+   ```bash
+   npm test
+   npm run test:e2e
+   ```
+   *(`npm test` kasa formatını ve mantığını her platformun şifreleme uygulamasıyla sınar. `npm run test:e2e` gerçek uygulamayı geçici bir veri klasörüyle başlatıp uçtan uca dener; çalışırken sistem panosunu kullanır.)*
+
+### Kod Yapısı
+
+- `shared/` — kasa formatı, şifreleme ve tüm kasa mantığı. Platformdan bağımsızdır; masaüstü uygulaması ile hazırlanmakta olan mobil uygulamalar tam olarak aynı dosyaları okuyup yazar.
+- `electron/` — masaüstü kabuğu: pencere, güvenlik ayarları ve ortak kodun üzerinde çalıştığı Node tabanlı şifreleme, depolama ve pencereler.
+- `src/` — React kullanıcı arayüzü.
+- `tests/` — birim testleri (`tests/unit`) ve uçtan uca testler (`tests/e2e`).
+
 ---
 
 ## 🛠️ Kullanılan Teknolojiler
