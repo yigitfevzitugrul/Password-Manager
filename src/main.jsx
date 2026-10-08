@@ -30,10 +30,20 @@ class ErrorBoundary extends React.Component {
     }
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-    <React.StrictMode>
-        <ErrorBoundary>
-            <App />
-        </ErrorBoundary>
-    </React.StrictMode>,
-)
+async function start() {
+    // On desktop the Electron preload script provides the vault API; elsewhere the page hosts it itself
+    if (!window.electronAPI) {
+        const { installWebHost } = await import('./host/webHost.js');
+        await installWebHost();
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(
+        <React.StrictMode>
+            <ErrorBoundary>
+                <App />
+            </ErrorBoundary>
+        </React.StrictMode>,
+    )
+}
+
+start();

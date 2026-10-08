@@ -99,20 +99,32 @@ function App() {
                 setLockNotice(true);
             }
         };
+        let lastActivity = Date.now();
         const reset = () => {
             clearTimeout(timer);
+            lastActivity = Date.now();
             // 0 = never lock on inactivity
             if (autoLockMinutes > 0) {
                 timer = setTimeout(lock, autoLockMinutes * 60 * 1000);
             }
         };
+        // Timers stand still while a phone keeps the app in the background: check the clock on return
+        const onVisible = () => {
+            if (document.visibilityState !== 'visible' || autoLockMinutes <= 0) return;
+            if (Date.now() - lastActivity >= autoLockMinutes * 60 * 1000) {
+                clearTimeout(timer);
+                lock();
+            }
+        };
         const events = ['mousemove', 'mousedown', 'keydown', 'wheel', 'touchstart'];
         events.forEach(name => window.addEventListener(name, reset, { passive: true }));
+        document.addEventListener('visibilitychange', onVisible);
         reset();
 
         return () => {
             clearTimeout(timer);
             events.forEach(name => window.removeEventListener(name, reset));
+            document.removeEventListener('visibilitychange', onVisible);
         };
     }, [isAuthenticated, autoLockMinutes]);
 

@@ -1,0 +1,9 @@
+{
+    "appId": "com.yigit.orendapass",
+    "appName": "Orenda Pass",
+    "webDir": "dist-mobile",
+    "android": {
+        "allowMixedContent": false,
+        "webContentsDebuggingEnabled": false
+    }
+}

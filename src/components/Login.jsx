@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { evaluateMasterPassword, MASTER_PASSWORD_MIN_LENGTH } from '../utils/masterPasswordStrength';
 
+// Hosts that cannot reach a sync folder say so (see src/host/webHost.js)
+const canSyncThroughFolder = () => !(window.electronAPI && window.electronAPI.hostFeatures && window.electronAPI.hostFeatures.folderSync === false);
+
 const ShieldIcon = () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -289,7 +292,7 @@ function Login({ onLogin, texts, notice }) {
         setError('');
     };
 
-    const joinAccountLink = (
+    const joinAccountLink = canSyncThroughFolder() && (
         <div className="auth-switch-footer">
             <span className="auth-switch-text">{texts ? texts.joinAccountQuestion : ''}</span>
             <button type="button" className="auth-link-btn" onClick={openJoinMode}>

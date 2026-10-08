@@ -145,6 +145,12 @@ const ShieldAlertIcon = () => (
     </svg>
 );
 
+const MenuIcon = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <line x1="4" y1="6" x2="20" y2="6" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="18" x2="20" y2="18" />
+    </svg>
+);
+
 const ChevronIcon = ({ open = true }) => (
     <svg
         viewBox="0 0 24 24"
@@ -184,6 +190,19 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
 
     // Option 5: Category Filter
     const [selectedCategory, setSelectedCategory] = useState('all');
+    // Narrow screens: the sidebar is a drawer that closes once something in it was chosen
+    const [navOpen, setNavOpen] = useState(false);
+    // The phone's back button closes the drawer (dialogs handle it themselves, see Modal.jsx)
+    useEffect(() => {
+        if (!navOpen) return undefined;
+        const handleBack = (e) => {
+            if (e.defaultPrevented) return;
+            e.preventDefault();
+            setNavOpen(false);
+        };
+        window.addEventListener('app-back', handleBack);
+        return () => window.removeEventListener('app-back', handleBack);
+    }, [navOpen]);
     const [categoriesOpen, setCategoriesOpen] = useState(() => localStorage.getItem('categories_open') !== 'false');
 
     // Option 6: Favorites Filter
@@ -530,8 +549,12 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
     if (!texts) return null;
 
     return (
-        <div className="dashboard">
-            <nav className="sidebar">
+        <div className={`dashboard ${navOpen ? 'nav-open' : ''}`}>
+            <div className="sidebar-backdrop" onClick={() => setNavOpen(false)} />
+            <nav
+                className="sidebar"
+                onClick={(e) => { if (e.target.closest('.menu-item, .category-item')) setNavOpen(false); }}
+            >
                 <div className="sidebar-header">
                     <div className="sidebar-logo">
                         <img
@@ -675,6 +698,18 @@ const Dashboard = ({ data, currentUser, onLogout, onSave, theme, toggleTheme, la
             </nav>
 
             <main className="content">
+                <div className="mobile-bar">
+                    <button type="button" className="mobile-menu-btn" onClick={() => setNavOpen(true)} aria-label={texts.appTitle}>
+                        <MenuIcon />
+                    </button>
+                    <span className="mobile-bar-title">
+                        {activeTab === 'trash' ? texts.navTrash
+                            : activeTab === 'stats' ? texts.navStats
+                            : activeTab === 'generator' ? texts.navGenerator
+                            : activeTab === 'account' ? texts.navSettings
+                            : showOnlyFavorites ? texts.navFavorites : texts.navPasswords}
+                    </span>
+                </div>
                 {activeTab === 'passwords' && (
                     <>
                         <header className="top-bar">

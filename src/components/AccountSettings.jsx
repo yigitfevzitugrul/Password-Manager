@@ -4,6 +4,9 @@ import { v4 as uuidv4 } from 'uuid';
 import { evaluateMasterPassword, MASTER_PASSWORD_MIN_LENGTH } from '../utils/masterPasswordStrength';
 import { AUTO_LOCK_OPTIONS, CLIPBOARD_CLEAR_OPTIONS } from '../utils/securityTimers';
 
+// Hosts that cannot reach a sync folder say so (see src/host/webHost.js)
+const canSyncThroughFolder = () => !(window.electronAPI && window.electronAPI.hostFeatures && window.electronAPI.hostFeatures.folderSync === false);
+
 const LockIcon = () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
@@ -881,7 +884,7 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
             </div>
 
             {/* SYNC BETWEEN DEVICES SECTION */}
-            <div className="settings-section">
+            <div className="settings-section" hidden={!canSyncThroughFolder()}>
                 <div className="section-title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <h3><SyncIcon /> {texts.syncTitle}</h3>
                     <span className={`badge ${syncStatus.enabled ? 'badge-success' : 'badge-muted'}`}>

@@ -11,8 +11,18 @@ function Modal({ title, children, onClose }) {
                 onClose();
             }
         };
+        // The phone's back button closes the dialog (see src/host/nativePlatform.js)
+        const handleBack = (e) => {
+            if (e.defaultPrevented) return;
+            e.preventDefault();
+            onClose();
+        };
         window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
+        window.addEventListener('app-back', handleBack);
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+            window.removeEventListener('app-back', handleBack);
+        };
     }, [onClose]);
 
     const handleOverlayMouseDown = (e) => {
