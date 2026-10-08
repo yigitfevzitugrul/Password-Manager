@@ -37,7 +37,11 @@ const API_METHODS = [
     'unlockBackup',
     'cancelBackup',
     'copyToClipboard',
-    'setClipboardClearSeconds'
+    'setClipboardClearSeconds',
+    'getSyncStatus',
+    'enableSync',
+    'syncNow',
+    'disableSync'
 ];
 
 const api = {};
@@ -49,6 +53,13 @@ api.onVaultLocked = (callback) => {
     const listener = () => callback();
     ipcRenderer.on('vault-locked', listener);
     return () => ipcRenderer.removeListener('vault-locked', listener);
+};
+
+// Entries changed without the page asking (another device's changes were merged in)
+api.onVaultChanged = (callback) => {
+    const listener = (event, change) => callback(change);
+    ipcRenderer.on('vault-changed', listener);
+    return () => ipcRenderer.removeListener('vault-changed', listener);
 };
 
 contextBridge.exposeInMainWorld('electronAPI', api);

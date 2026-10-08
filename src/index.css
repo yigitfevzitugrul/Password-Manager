@@ -2683,6 +2683,23 @@ button {
   text-align: left;
 }
 
+.sync-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0.5rem 0;
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.sync-details .sub {
+  color: var(--text-muted);
+}
+
+.sync-details code {
+  word-break: break-all;
+}
+
 .update-banner {
   position: fixed;
   top: 14px;

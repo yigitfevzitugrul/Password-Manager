@@ -62,6 +62,7 @@ Windows 10/11 (64-bit) gerektirir. İndirdiğiniz dosyayı doğrulayabilmeniz i�
 - 🔍 **Have I Been Pwned (HIBP) Sızıntı Analizi:** Şifrelerinizin bilinen küresel veri ihlallerinde yer alıp almadığını *k-Anonymity* güvenli sorgulama modeliyle denetleme.
 - 📊 **Kasa Güvenlik Raporu:** Dinamik güvenlik skoru, zayıf ve tekrar eden şifre tespitleri, güvenlik önerileri.
 - 🎲 **Gelişmiş Kriptografik Şifre Oluşturucu:** Renk kodlu karakter ayrımı (sayılar, semboller, harfler), gerçek zamanlı entropi hesabı ve tek tıkla ön ayarlar (*Dengeli, Güçlü, Maksimum, PIN*).
+- 🔄 **Sunucusuz Cihazlar Arası Eşitleme:** Kasanızı, seçtiğiniz bir klasör (örneğin bulut sürücünüz) üzerinden diğer cihazlarınızla eşitleyin. Klasöre yalnızca şifreli dosyalar yazılır; aynı kayıt iki cihazda değiştirilirse sonraki değişiklik kazanır ve diğer şifre geçmişte saklanır.
 - 📦 **Esnek İçe / Dışa Aktarma (Yedekleme):** Chrome, Bitwarden, CSV ve JSON formatlarındaki yedekleri kolayca içeri aktarma veya dışa aktarma.
 - ⏱️ **Kaba Kuvvet (Brute-Force) Koruması:** Arka arkaya yapılan hatalı giriş denemelerinde kademeli kilitlenme ve güvenlik zamanlayıcısı.
 - 🌗 **Karanlık & Aydınlık Mod:** Göz yormayan Obsidian Black ve modern Clean Slate temaları.

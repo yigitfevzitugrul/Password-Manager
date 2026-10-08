@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-import { createVaultService } from '../../shared/vaultService.js';
+import { createDevice as createFakeDevice } from './_fakes.mjs';
 import { createTotp } from '../../shared/totp.js';
 import { noblePrimitives } from '../../shared/noblePrimitives.js';
 import { bytesToUtf8 } from '../../shared/bytes.js';
@@ -15,69 +15,10 @@ const nodePrimitives = require('../../electron/nodePrimitives.cjs');
 const PASSWORD = 'kavun-Masa-71-deniz';
 const NEW_PASSWORD = 'limon-Kapi-48-bulut';
 
-function createMemoryStorage(files = new Map()) {
-    return {
-        files,
-        read: (name) => (files.has(name) ? Uint8Array.from(files.get(name)) : null),
-        write: (name, bytes) => { files.set(name, Uint8Array.from(bytes)); },
-        exists: (name) => files.has(name),
-        remove: (name) => { files.delete(name); },
-        list: (dir) => [...files.keys()]
-            .filter(name => name.startsWith(`${dir}/`))
-            .map(name => name.slice(dir.length + 1))
-            .filter(name => !name.includes('/')),
-        stat: (name) => (files.has(name) ? { size: files.get(name).length, mtimeMs: 1 } : null)
-    };
-}
+// Entries as the user wrote them, without the modification time the vault adds
+const plain = (items) => items.map(({ mtime, ...entry }) => entry);
 
-// A host with a clipboard, a "documents folder" (external) and scripted dialogs
-function createFakePlatform(external = new Map()) {
-    const host = {
-        external,
-        clipboardText: '',
-        lockedNotifications: 0,
-        openedUrls: [],
-        cancelSave: false,
-        pick: null, // path the next "open file" dialog returns, null = canceled
-        http: async () => { throw new Error('offline'); }
-    };
-    host.platform = {
-        getVersion: () => '1.1.0',
-        notifyLocked: () => { host.lockedNotifications++; },
-        clipboard: {
-            readText: async () => host.clipboardText,
-            writeText: async (text) => { host.clipboardText = text; },
-            clear: () => { host.clipboardText = ''; }
-        },
-        openExternal: (url) => { host.openedUrls.push(url); },
-        httpGet: (request) => host.http(request),
-        makeQrDataUrl: async (text) => `data:fake,${text}`,
-        saveFile: async ({ defaultName, data }) => {
-            if (host.cancelSave) return { canceled: true };
-            const path = `/documents/${defaultName}`;
-            external.set(path, Uint8Array.from(data));
-            return { canceled: false, path };
-        },
-        openFile: async ({ maxBytes }) => {
-            if (!host.pick) return { canceled: true };
-            const data = external.get(host.pick);
-            if (data.length > maxBytes) return { canceled: false, tooLarge: true };
-            return { canceled: false, path: host.pick, name: host.pick.split('/').pop(), data };
-        },
-        readFile: async (path) => {
-            if (!external.has(path)) throw new Error('not found');
-            return external.get(path);
-        }
-    };
-    return host;
-}
-
-function createDevice(primitives, files, external) {
-    const storage = createMemoryStorage(files);
-    const host = createFakePlatform(external);
-    const service = createVaultService({ primitives, storage, platform: host.platform });
-    return { ...service, storage, host };
-}
+const createDevice = (primitives, files, external) => createFakeDevice(primitives, { files, external });
 
 test('the page can call exactly what the vault service offers', () => {
     const preload = readFileSync(new URL('../../electron/preload.cjs', import.meta.url), 'utf8');
@@ -102,7 +43,7 @@ test('whole account lifecycle without Electron or Node crypto', async () => {
     assert.equal(bytesToUtf8(storage.read(vaultName).subarray(0, 4)), 'OPV2');
 
     const items = [{ id: '1', title: 'Örnek', password: 'gizli-şifre' }];
-    assert.deepEqual(await api.savePasswords(items), { success: true });
+    assert.equal((await api.savePasswords(items)).success, true);
     assert.ok(!bytesToUtf8(storage.read(vaultName)).includes('gizli'), 'vault is not stored in plain text');
     await assert.rejects(api.savePasswords('bad'));
 
@@ -112,7 +53,7 @@ test('whole account lifecycle without Electron or Node crypto', async () => {
     let login = await api.login(userId, 'yanlis-sifre-123');
     assert.deepEqual([login.success, login.attemptsRemaining], [false, 2]);
     login = await api.login(userId, PASSWORD);
-    assert.deepEqual(login.data, items);
+    assert.deepEqual(plain(login.data), items);
     assert.equal(api.listAutoBackups().length, 1, 'a backup is taken at login');
 
     // TOTP login step
@@ -124,7 +65,7 @@ test('whole account lifecycle without Electron or Node crypto', async () => {
     assert.equal(login.require2FA, true);
     await assert.rejects(api.savePasswords(items), /Oturum/, 'not unlocked before the code is given');
     assert.equal(api.verify2FALogin('12').success, false);
-    assert.deepEqual(api.verify2FALogin(totp.generateTOTP(setup.secret)).data, items);
+    assert.deepEqual(plain(api.verify2FALogin(totp.generateTOTP(setup.secret)).data), items);
     assert.equal((await api.disable2FA('yanlis-sifre-123')).success, false);
     assert.equal((await api.disable2FA(PASSWORD)).success, true);
 
@@ -133,7 +74,7 @@ test('whole account lifecycle without Electron or Node crypto', async () => {
     assert.deepEqual(api.autoLock(), { quickUnlock: true });
     await assert.rejects(api.savePasswords(items), /Oturum/);
     assert.equal(api.quickUnlock('000000').attemptsRemaining, 2);
-    assert.deepEqual(api.quickUnlock('482913').data, items);
+    assert.deepEqual(plain(api.quickUnlock('482913').data), items);
 
     // automatic lock from the host (screen lock): the UI is told
     assert.equal(device.softLock(true), true);
@@ -152,7 +93,7 @@ test('whole account lifecycle without Electron or Node crypto', async () => {
     assert.equal(bytesToUtf8(storage.read(vaultName).subarray(0, 4)), 'OPK2');
     assert.deepEqual(api.getKeyFileStatus(), { enabled: true, path: '/documents/orenda-pass.opkey' });
     api.logout();
-    assert.deepEqual((await api.login(userId, PASSWORD)).data, items, 'key file found where it was saved');
+    assert.deepEqual(plain((await api.login(userId, PASSWORD)).data), items, 'key file found where it was saved');
     api.logout();
 
     const keyFile = host.external.get(enabled.path);
@@ -163,7 +104,7 @@ test('whole account lifecycle without Electron or Node crypto', async () => {
     host.external.set('/usb/key.opkey', keyFile);
     host.pick = '/usb/key.opkey';
     assert.equal((await api.selectKeyFile(userId)).keyFileName, 'key.opkey');
-    assert.deepEqual((await api.login(userId, PASSWORD)).data, items);
+    assert.deepEqual(plain((await api.login(userId, PASSWORD)).data), items);
     assert.equal(api.getKeyFileStatus().path, '/usb/key.opkey');
 
     // master password change keeps everything readable
@@ -173,7 +114,7 @@ test('whole account lifecycle without Electron or Node crypto', async () => {
     assert.equal((await api.openBackup(api.listAutoBackups()[0].name)).success, true, 'old backups were re-encrypted');
     api.logout();
     assert.equal((await api.login(userId, PASSWORD)).success, false);
-    assert.deepEqual((await api.login(userId, NEW_PASSWORD)).data, items);
+    assert.deepEqual(plain((await api.login(userId, NEW_PASSWORD)).data), items);
 
     // encrypted backup: export, then restore after turning the key file off
     const exported = await api.exportEncryptedBackup();
@@ -186,7 +127,7 @@ test('whole account lifecycle without Electron or Node crypto', async () => {
     assert.equal((await api.openBackup()).needsPassword, true);
     host.pick = '/usb/key.opkey'; // the dialog that asks for the backup's key file
     const restored = await api.unlockBackup(NEW_PASSWORD);
-    assert.deepEqual(restored.items, items);
+    assert.deepEqual(plain(restored.items), items);
 
     // clipboard
     assert.equal(api.setClipboardClearSeconds(7), false);
@@ -214,7 +155,7 @@ test('a vault folder written on one platform opens on the other, both ways', asy
     // "phone": pure JS, same files (as if the data folder had been synchronised)
     const phone = createDevice(noblePrimitives, new Map(files), external);
     let login = await phone.api.login(user.id, PASSWORD);
-    assert.deepEqual(login.data, items);
+    assert.deepEqual(plain(login.data), items);
     assert.equal(phone.api.getQuickPinStatus().enabled, true, 'PIN set on the desktop is known on the phone');
     const fromPhone = [...items, { id: '2', title: 'Telefonda eklendi', password: 'şifre-2' }];
     await phone.api.savePasswords(fromPhone);
@@ -225,7 +166,7 @@ test('a vault folder written on one platform opens on the other, both ways', asy
     const desktopAgain = createDevice(nodePrimitives, new Map(phone.storage.files), external);
     assert.equal((await desktopAgain.api.login(user.id, PASSWORD)).success, false);
     login = await desktopAgain.api.login(user.id, NEW_PASSWORD);
-    assert.deepEqual(login.data, fromPhone);
+    assert.deepEqual(plain(login.data), fromPhone);
 });
 
 test('breach check and update check handle every network outcome', async () => {

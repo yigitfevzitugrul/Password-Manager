@@ -202,7 +202,7 @@ function Login({ onLogin, texts, notice }) {
                     setTwoFACode('');
                     setError('');
                 } else {
-                    onLogin(res.data, res.user);
+                    onLogin(res.data, res.user, res.revision);
                 }
             } else if (res.needsKeyFile) {
                 // The key file is not where it was last time (e.g. USB drive not plugged in)
@@ -238,7 +238,7 @@ function Login({ onLogin, texts, notice }) {
         try {
             const res = await window.electronAPI.quickUnlock(quickPin);
             if (res.success) {
-                onLogin(res.data, res.user);
+                onLogin(res.data, res.user, res.revision);
             } else {
                 setQuickPin('');
                 setError(res.error || 'Hatalı PIN.');
@@ -281,7 +281,7 @@ function Login({ onLogin, texts, notice }) {
         try {
             const res = await window.electronAPI.verify2FALogin(twoFACode);
             if (res.success) {
-                onLogin(res.data, res.user);
+                onLogin(res.data, res.user, res.revision);
             } else {
                 setError(res.error || 'Doğrulama kodu geçersiz.');
                 setTwoFACode('');
@@ -359,7 +359,7 @@ function Login({ onLogin, texts, notice }) {
             });
 
             if (res.success) {
-                onLogin(res.data || [], res.user);
+                onLogin(res.data || [], res.user, res.revision);
             } else {
                 setError(res.error || 'Kayıt tamamlanamadı.');
             }

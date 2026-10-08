@@ -47,7 +47,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   await assert.rejects(enc.decryptWithPassword(vaultBytes, 'kavun-Masa-71-deniz'), e => e.code === 'KEYFILE_REQUIRED');
   await assert.rejects(enc.decryptWithPassword(vaultBytes, 'kavun-Masa-71-deniz', crypto.randomBytes(32)));
   const realSecret = Buffer.from(JSON.parse(fs.readFileSync(keyPath, 'utf8')).key, 'base64');
-  assert.equal((await enc.decryptWithPassword(vaultBytes, 'kavun-Masa-71-deniz', realSecret)).text, '[{"id":"1","title":"a","password":"x"}]');
+  const onDisk = JSON.parse((await enc.decryptWithPassword(vaultBytes, 'kavun-Masa-71-deniz', realSecret)).text);
+  assert.deepEqual(onDisk.map(({ mtime, ...entry }) => entry), [{ id: '1', title: 'a', password: 'x' }]);
 
   // auto backup was re-encrypted with the key file too
   let list = await run(`return api.listAutoBackups()`);

@@ -62,6 +62,7 @@ Requires Windows 10/11 (64-bit). Each release lists the SHA-256 checksum of the 
 - 🔍 **Have I Been Pwned (HIBP) Breach Scanner:** Check if any of your saved passwords have been compromised in known global breaches using secure *k-Anonymity*.
 - 📊 **Vault Health & Security Score:** Real-time analytics analyzing weak, reused, or compromised passwords alongside an overall security score.
 - 🎲 **Cryptographic Password Generator:** Color-coded character breakdown (numbers, symbols, letters), entropy bit calculation, and one-click presets (*Balanced, Strong, Maximum, PIN*).
+- 🔄 **Serverless Sync Between Devices:** Keep your vault in sync with your other devices through a folder you choose (for example inside your cloud drive). Only encrypted files are written there; if the same entry is changed on two devices, the later change wins and the other password is kept in the entry's history.
 - 📦 **Data Management & Backups:** Seamless export and import with support for Chrome, Bitwarden, CSV, and JSON formats.
 - ⏱️ **Brute-Force Attack Prevention:** Exponential lockout penalty and countdown timers triggered on consecutive failed login attempts.
 - 🌗 **Dark & Light Themes:** Polished Obsidian Black and Clean Slate visual themes.

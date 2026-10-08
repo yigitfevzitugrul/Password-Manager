@@ -14,6 +14,23 @@ function App() {
     const [lang, setLang] = useState(localStorage.getItem('lang') || 'tr');
     const [lockNotice, setLockNotice] = useState(false);
     const [availableUpdate, setAvailableUpdate] = useState(null);
+    // Revision of the entries in `passwords`; sent with every save so the vault knows what the
+    // save is based on (entries synced from another device meanwhile are then never overwritten).
+    // Kept in state, not a ref: it must always belong to the same render as the entries.
+    const [vaultRevision, setVaultRevision] = useState(undefined);
+    const noteRevision = (revision) => {
+        if (typeof revision !== 'number') return;
+        setVaultRevision(current => (current >= revision ? current : revision));
+    };
+
+    // Another device's changes were merged into the vault
+    React.useEffect(() => {
+        if (!window.electronAPI || !window.electronAPI.onVaultChanged) return undefined;
+        return window.electronAPI.onVaultChanged(({ items, revision }) => {
+            noteRevision(revision);
+            setPasswords(items);
+        });
+    }, []);
 
     // Look for a newer release once at startup (can be turned off in Settings)
     React.useEffect(() => {
@@ -54,6 +71,7 @@ function App() {
     };
 
     const clearSession = () => {
+        setVaultRevision(undefined);
         setPasswords([]);
         setCurrentUser(null);
         setIsAuthenticated(false);
@@ -98,13 +116,14 @@ function App() {
         };
     }, [isAuthenticated, autoLockMinutes]);
 
-    const handleLogin = (data, user) => {
+    const handleLogin = (data, user, revision) => {
         setLockNotice(false);
+        setVaultRevision(revision);
 
         const cutoff = Date.now() - TRASH_RETENTION_MS;
         const items = (data || []).filter(item => !item.deletedAt || item.deletedAt > cutoff);
         if (items.length !== (data || []).length) {
-            window.electronAPI.savePasswords(items).catch(() => {});
+            window.electronAPI.savePasswords(items, revision).then(res => noteRevision(res.revision)).catch(() => {});
         }
         setPasswords(items);
         setCurrentUser(user || null);
@@ -121,7 +140,8 @@ function App() {
 
     const handleSave = async (newData) => {
         setPasswords(newData);
-        await window.electronAPI.savePasswords(newData);
+        const res = await window.electronAPI.savePasswords(newData, vaultRevision);
+        noteRevision(res.revision);
     };
 
     return (

@@ -4,6 +4,7 @@
  */
 const { app, shell, clipboard, dialog } = require('electron');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const https = require('https');
 const QRCode = require('qrcode');
@@ -11,6 +12,14 @@ const QRCode = require('qrcode');
 /**
  * @param {() => Electron.BrowserWindow | null} getWindow
  */
+// Sync files live in a folder the user picked; only plain file names are ever used inside it
+function inFolder(folder, name) {
+    if (typeof name !== 'string' || name !== path.basename(name) || name.startsWith('.')) {
+        throw new Error('Geçersiz dosya adı.');
+    }
+    return path.join(folder, name);
+}
+
 function createDesktopPlatform(getWindow) {
     const liveWindow = () => {
         const win = getWindow();
@@ -24,6 +33,13 @@ function createDesktopPlatform(getWindow) {
             const win = liveWindow();
             if (win) win.webContents.send('vault-locked');
         },
+
+        notifyVaultChanged(change) {
+            const win = liveWindow();
+            if (win) win.webContents.send('vault-changed', change);
+        },
+
+        getDeviceName: () => os.hostname(),
 
         clipboard: {
             readText: () => clipboard.readText(),
@@ -87,6 +103,53 @@ function createDesktopPlatform(getWindow) {
         async readFile(filePath, maxBytes) {
             if (fs.statSync(filePath).size > maxBytes) throw new Error('Dosya çok büyük.');
             return fs.readFileSync(filePath);
+        },
+
+        // --- Sync folder ---
+
+        async pickFolder({ title }) {
+            const result = await dialog.showOpenDialog(liveWindow(), { title, properties: ['openDirectory', 'createDirectory'] });
+            if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+            return { canceled: false, path: result.filePaths[0] };
+        },
+
+        async listFolder(folder) {
+            const names = await fs.promises.readdir(folder);
+            const entries = [];
+            for (const name of names) {
+                if (!name.startsWith('orenda-sync-')) continue;
+                try {
+                    const stat = await fs.promises.stat(path.join(folder, name));
+                    if (stat.isFile()) entries.push({ name, size: stat.size, mtimeMs: stat.mtimeMs });
+                } catch (e) {
+                    // removed while listing
+                }
+            }
+            return entries;
+        },
+
+        async readFolderFile(folder, name, maxBytes) {
+            const filePath = inFolder(folder, name);
+            if ((await fs.promises.stat(filePath)).size > maxBytes) throw new Error('Dosya çok büyük.');
+            return fs.promises.readFile(filePath);
+        },
+
+        // Written under a temporary name first, so other devices never read a half-written file
+        async writeFolderFile(folder, name, bytes) {
+            const filePath = inFolder(folder, name);
+            const tmpPath = `${filePath}.tmp`;
+            await fs.promises.writeFile(tmpPath, bytes);
+            try {
+                await fs.promises.rename(tmpPath, filePath);
+            } catch (e) {
+                // A cloud drive client may hold the old file open: fall back to writing in place
+                await fs.promises.writeFile(filePath, bytes);
+                await fs.promises.unlink(tmpPath).catch(() => {});
+            }
+        },
+
+        async removeFolderFile(folder, name) {
+            await fs.promises.unlink(inFolder(folder, name));
         }
     };
 }

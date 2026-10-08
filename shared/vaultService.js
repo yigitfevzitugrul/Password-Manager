@@ -17,6 +17,13 @@
  *       openFile({ title, filters, maxBytes })
  *                -> Promise<{ canceled } | { canceled: false, tooLarge } | { canceled: false, path, name, data }>
  *       readFile(path, maxBytes) -> Promise<Uint8Array>   a file the user picked earlier (key file)
+ *       notifyVaultChanged({ items, revision })          entries changed without the UI asking (sync)
+ *       getDeviceName() -> string
+ *       pickFolder({ title }) -> Promise<{ canceled } | { canceled: false, path }>
+ *       listFolder(path) -> Promise<{ name, size, mtimeMs }[]>
+ *       readFolderFile(path, name, maxBytes) -> Promise<Uint8Array>
+ *       writeFolderFile(path, name, bytes) -> Promise
+ *       removeFolderFile(path, name) -> Promise
  *
  * `api` holds one function per UI request; its keys are the single list of what the UI may call.
  */
@@ -25,6 +32,7 @@ import { createVaultCrypto } from './vaultCrypto.js';
 import { createVaultStore } from './vaultStore.js';
 import { createTotp } from './totp.js';
 import { generateKeyFile, parseKeyFile, MAX_KEY_FILE_BYTES } from './keyFile.js';
+import { ensureItemIds, applyUiChanges, mergeStates, sanitizeState, pruneTombstones } from './vaultSync.js';
 
 const MAX_2FA_ATTEMPTS = 5;
 const MIN_MASTER_PASSWORD_LENGTH = 12; // for new passwords; existing shorter ones still log in
@@ -51,6 +59,18 @@ const KEY_FILE_FILTERS = [
     { name: 'Tüm Dosyalar', extensions: ['*'] }
 ];
 
+// --- Sync through a folder the user chose (typically inside a cloud drive) ---
+// Every device writes only its own file and reads the others, so two devices never overwrite each other.
+const SYNC_FILE_PATTERN = /^orenda-sync-([a-f0-9]{16})-([a-f0-9]{16})\.opsync$/;
+const KEYRING_PATTERN = /^orenda-sync-([a-f0-9]{16})\.opkeyring$/;
+const syncFileName = (vaultId, deviceId) => `orenda-sync-${vaultId}-${deviceId}.opsync`;
+const keyringName = (vaultId) => `orenda-sync-${vaultId}.opkeyring`;
+const MAX_SYNC_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_KEYRING_BYTES = 64 * 1024;
+const SYNC_AFTER_UNLOCK_MS = 1500;
+const SYNC_AFTER_SAVE_MS = 3000;
+const SYNC_INTERVAL_MS = 60 * 1000;
+
 const RELEASES_API_PATH = '/repos/yigitfevzitugrul/Password-Manager/releases/latest';
 const RELEASES_PAGE_URL = 'https://github.com/yigitfevzitugrul/Password-Manager/releases/latest';
 
@@ -73,6 +93,25 @@ export function createVaultService({ primitives, storage, platform }) {
     // The master password itself is never kept: only the derived key lives in memory while unlocked.
     let currentUserId = null;
     let currentKey = null;
+    // The unlocked account's entries as they are in the vault right now
+    let sessionItems = null;
+    // What the UI has been given, by revision number. The UI says which revision a save is based
+    // on, so entries merged in from another device that it has not shown yet are never lost.
+    let uiRevision = 0;
+    const uiStates = new Map();
+
+    function rememberUiState(items) {
+        uiRevision++;
+        uiStates.set(uiRevision, items);
+        for (const revision of [...uiStates.keys()]) {
+            if (revision <= uiRevision - 5) uiStates.delete(revision);
+        }
+        return uiRevision;
+    }
+
+    function tellUiVaultChanged() {
+        platform.notifyVaultChanged({ items: sessionItems, revision: rememberUiState(sessionItems) });
+    }
     let pending2FALogin = null;
     let pending2FASetupSecret = null;
     let pendingBackup = null;
@@ -133,15 +172,39 @@ export function createVaultService({ primitives, storage, platform }) {
         if (pending2FALogin) wipeKey(pending2FALogin.keyMaterial);
         currentUserId = null;
         currentKey = null;
+        sessionItems = null;
+        uiStates.clear();
         pending2FALogin = null;
         pending2FASetupSecret = null;
         pendingBackup = null;
         quickPin = null;
+        dropSync();
         dropSuspended();
         clearClipboardIfOurs();
         if (notifyUi && wasUnlocked) {
             platform.notifyLocked();
         }
+    }
+
+    // Everything that has to happen when an account becomes unlocked.
+    // Returns the revision number of the entries the UI is about to receive.
+    function openSession(userId, keyMaterial, items) {
+        currentUserId = userId;
+        currentKey = keyMaterial;
+        sessionItems = items;
+        uiStates.clear();
+        loadQuickPin();
+        loadSync();
+        return rememberUiState(items);
+    }
+
+    const randomId = () => bytesToHex(primitives.randomBytes(16));
+
+    // Timers must not keep a test process or a closing app alive
+    function startTimer(callback, delayMs) {
+        const timer = setTimeout(callback, delayMs);
+        if (timer && typeof timer.unref === 'function') timer.unref();
+        return timer;
     }
 
     // --- Quick unlock PIN ---
@@ -197,12 +260,15 @@ export function createVaultService({ primitives, storage, platform }) {
             keyMaterial: currentKey,
             pin: quickPin,
             attempts: 0,
-            timer: setTimeout(dropSuspended, QUICK_UNLOCK_MAX_AGE_MS)
+            timer: startTimer(dropSuspended, QUICK_UNLOCK_MAX_AGE_MS)
         };
 
         currentUserId = null;
         currentKey = null;
+        sessionItems = null;
+        uiStates.clear();
         quickPin = null;
+        dropSync();
         pending2FASetupSecret = null;
         pendingBackup = null;
         clearClipboardIfOurs();
@@ -247,10 +313,8 @@ export function createVaultService({ primitives, storage, platform }) {
             suspended = null;
             lockVault(false);
 
-            currentUserId = resumed.userId;
-            currentKey = resumed.keyMaterial;
-            quickPin = resumed.pin;
-            return { success: true, data, user: { id: resumed.userId, username: resumed.username } };
+            const revision = openSession(resumed.userId, resumed.keyMaterial, data);
+            return { success: true, data, revision, user: { id: resumed.userId, username: resumed.username } };
         } catch (err) {
             console.error('Quick unlock error:', err.message);
             dropSuspended();
@@ -347,13 +411,13 @@ export function createVaultService({ primitives, storage, platform }) {
             store.writeVault(newUser.id, encryptWithKey(JSON.stringify([]), keyMaterial));
 
             lockVault(false);
-            currentUserId = newUser.id;
-            currentKey = keyMaterial;
+            const revision = openSession(newUser.id, keyMaterial, []);
             loginAttempts = 0;
             lockoutUntil = 0;
 
             return {
                 success: true,
+                revision,
                 user: {
                     id: newUser.id,
                     username: newUser.username,
@@ -469,6 +533,10 @@ export function createVaultService({ primitives, storage, platform }) {
         try {
             let vaultData = JSON.parse(decryptedJSON);
             if (!Array.isArray(vaultData)) vaultData = [];
+            vaultData = vaultData.filter(item => typeof item === 'object' && item !== null && !Array.isArray(item));
+            // Entries are told apart by their id when devices are merged; very old vaults may lack some
+            const withIds = ensureItemIds(vaultData, randomId);
+            vaultData = withIds.items;
 
             // 2FA fails closed: if it is enabled but the secret cannot be read, nobody gets in.
             let totpSecret = null;
@@ -496,6 +564,8 @@ export function createVaultService({ primitives, storage, platform }) {
                 if (totpSecret !== null) {
                     store.save2FASecret(userId, encryptWithKey(totpSecret, keyMaterial));
                 }
+                store.writeVault(userId, encryptWithKey(JSON.stringify(vaultData), keyMaterial));
+            } else if (withIds.changed) {
                 store.writeVault(userId, encryptWithKey(JSON.stringify(vaultData), keyMaterial));
             }
 
@@ -532,9 +602,7 @@ export function createVaultService({ primitives, storage, platform }) {
                 };
             }
 
-            currentUserId = userId;
-            currentKey = keyMaterial;
-            loadQuickPin();
+            const revision = openSession(userId, keyMaterial, vaultData);
             store.setLastActiveUser(userId);
             loginAttempts = 0;
             lockoutUntil = 0;
@@ -542,6 +610,7 @@ export function createVaultService({ primitives, storage, platform }) {
             return {
                 success: true,
                 data: vaultData,
+                revision,
                 user: { id: targetUser.id, username: targetUser.username }
             };
         } catch (err) {
@@ -561,18 +630,16 @@ export function createVaultService({ primitives, storage, platform }) {
         const isValid = verifyTOTP(pending2FALogin.totpSecret, cleanCode);
 
         if (isValid) {
-            currentUserId = pending2FALogin.userId;
-            currentKey = pending2FALogin.keyMaterial;
-            loadQuickPin();
-            store.setLastActiveUser(currentUserId);
             const data = pending2FALogin.decryptedData;
+            const revision = openSession(pending2FALogin.userId, pending2FALogin.keyMaterial, data);
+            store.setLastActiveUser(currentUserId);
             const user = { id: pending2FALogin.userId, username: pending2FALogin.username };
 
             pending2FALogin = null;
             loginAttempts = 0;
             lockoutUntil = 0;
 
-            return { success: true, data, user };
+            return { success: true, data, revision, user };
         }
 
         pending2FALogin.attempts++;
@@ -669,7 +736,8 @@ export function createVaultService({ primitives, storage, platform }) {
         return { success: true };
     };
 
-    api.savePasswords = async (passwordsData) => {
+    // `baseRevision` is the revision of the entries the UI was working from (see rememberUiState)
+    api.savePasswords = async (passwordsData, baseRevision) => {
         if (!currentUserId || !currentKey) throw new Error('Oturum açık değil.');
 
         if (!Array.isArray(passwordsData) || passwordsData.length > MAX_VAULT_ITEMS ||
@@ -677,12 +745,29 @@ export function createVaultService({ primitives, storage, platform }) {
             throw new Error('Geçersiz kasa verisi.');
         }
 
-        const jsonStr = JSON.stringify(passwordsData);
-        if (utf8ToBytes(jsonStr).length > MAX_VAULT_BYTES) {
+        const now = Date.now();
+        const next = ensureItemIds(passwordsData, randomId).items;
+        const base = uiStates.get(baseRevision) || uiStates.get(uiRevision) || [];
+        const { items, removedIds, unseen } = applyUiChanges(base, next, sessionItems || [], now);
+
+        const jsonStr = JSON.stringify(items);
+        if (items.length > MAX_VAULT_ITEMS || utf8ToBytes(jsonStr).length > MAX_VAULT_BYTES) {
             throw new Error('Kasa verisi çok büyük.');
         }
         store.writeVault(currentUserId, encryptWithKey(jsonStr, currentKey));
-        return { success: true };
+        sessionItems = items;
+        const revision = rememberUiState(next);
+
+        if (sync) {
+            if (removedIds.length > 0) {
+                for (const id of removedIds) sync.tombstones[id] = now;
+                saveSync();
+            }
+            scheduleSync(SYNC_AFTER_SAVE_MS);
+        }
+        // The vault holds more than the UI just sent: bring the UI up to date
+        if (unseen) tellUiVaultChanged();
+        return { success: true, revision };
     };
 
     // Re-encrypts everything a user owns (vault, 2FA secret, automatic backups) with a new key
@@ -716,6 +801,7 @@ export function createVaultService({ primitives, storage, platform }) {
         currentKey = newKey;
         wipeKey(oldKey);
         if (quickPin) saveQuickPin();
+        if (sync) saveSync();
     }
 
     api.changePassword = async (oldPassword, newPassword) => {
@@ -744,6 +830,7 @@ export function createVaultService({ primitives, storage, platform }) {
             }
 
             rekeyUser(userId, oldKey, newKey);
+            await refreshKeyring(newPassword);
             return { success: true };
         } catch (err) {
             console.error('Change password error:', err.message);
@@ -810,6 +897,7 @@ export function createVaultService({ primitives, storage, platform }) {
             }
             rekeyUser(userId, oldKey, newKey);
             store.setUserKeyFilePath(userId, saved.path);
+            await refreshKeyring(masterPassword);
             return { success: true, path: saved.path };
         } catch (err) {
             console.error('Enable key file error:', err.message);
@@ -832,6 +920,7 @@ export function createVaultService({ primitives, storage, platform }) {
             }
             rekeyUser(userId, oldKey, newKey);
             store.setUserKeyFilePath(userId, null);
+            await refreshKeyring(masterPassword);
             return { success: true };
         } catch (err) {
             console.error('Disable key file error:', err.message);
@@ -869,6 +958,326 @@ export function createVaultService({ primitives, storage, platform }) {
             return { success: false, error: 'PIN kaldırılamadı: ' + err.message };
         }
         quickPin = null;
+        return { success: true };
+    };
+
+    // --- Sync between devices ---
+    // The user picks a folder (usually inside a cloud drive). Each device keeps one encrypted file
+    // there with its whole vault and merges the files of the other devices into its own vault.
+    // The files are encrypted with a random sync key; the "keyring" file holds that key encrypted
+    // with the master password, which is how a new device joins.
+    let sync = null; // { vaultId, deviceId, folder, key, salt, tombstones, seen, lastWritten, lastSyncAt, error }
+    let syncTimer = null;
+    let syncRunning = null;
+    let syncAgain = false;
+
+    const syncKeyMaterial = (state) => ({ key: state.key, salt: state.salt, keyFileSecret: null });
+
+    function dropSync() {
+        clearTimeout(syncTimer);
+        syncTimer = null;
+        if (sync) sync.key.fill(0);
+        sync = null;
+    }
+
+    // Sync settings are stored encrypted with the vault key, like the quick unlock PIN
+    function loadSync() {
+        dropSync();
+        try {
+            const file = store.readSync(currentUserId);
+            if (file === null) return;
+            const parsed = JSON.parse(decryptWithKey(file, currentKey));
+            sync = {
+                vaultId: parsed.vaultId,
+                deviceId: parsed.deviceId,
+                folder: parsed.folder,
+                key: base64ToBytes(parsed.key),
+                salt: base64ToBytes(parsed.salt),
+                tombstones: sanitizeState({ tombstones: parsed.tombstones }).tombstones,
+                seen: new Map(), // other devices' files already merged: name -> { signature, deviceName, writtenAt }
+                lastWritten: null,
+                lastSyncAt: null,
+                error: null
+            };
+            scheduleSync(SYNC_AFTER_UNLOCK_MS);
+        } catch (e) {
+            console.error('Sync settings could not be read:', e.message);
+            sync = null;
+        }
+    }
+
+    function saveSync() {
+        const payload = JSON.stringify({
+            vaultId: sync.vaultId,
+            deviceId: sync.deviceId,
+            folder: sync.folder,
+            key: bytesToBase64(sync.key),
+            salt: bytesToBase64(sync.salt),
+            tombstones: sync.tombstones
+        });
+        store.writeSync(currentUserId, encryptWithKey(payload, currentKey));
+    }
+
+    function scheduleSync(delayMs) {
+        if (!sync) return;
+        clearTimeout(syncTimer);
+        syncTimer = startTimer(() => { runSync().catch(() => {}); }, delayMs);
+    }
+
+    function getSyncStatus() {
+        if (!currentUserId || !currentKey || !sync) return { enabled: false };
+        return {
+            enabled: true,
+            folder: sync.folder,
+            lastSyncAt: sync.lastSyncAt,
+            error: sync.error,
+            devices: [...sync.seen.values()]
+                .map(device => ({ name: device.deviceName, lastSeenAt: device.writtenAt }))
+                .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+        };
+    }
+
+    // One sync at a time; a request that arrives meanwhile triggers another round afterwards
+    function runSync() {
+        if (!sync || !currentUserId || !currentKey) return Promise.resolve({ success: false, error: 'Eşitleme açık değil.' });
+        if (syncRunning) {
+            syncAgain = true;
+            return syncRunning;
+        }
+        syncRunning = syncOnce().finally(() => {
+            syncRunning = null;
+            if (syncAgain) {
+                syncAgain = false;
+                scheduleSync(0);
+            } else {
+                scheduleSync(SYNC_INTERVAL_MS);
+            }
+        });
+        return syncRunning;
+    }
+
+    async function syncOnce() {
+        const state = sync;
+        const userId = currentUserId;
+        const stillOpen = () => sync === state && currentUserId === userId && currentKey !== null;
+
+        try {
+            // 1. Read what the other devices wrote (slow part; the vault may change meanwhile)
+            const entries = await platform.listFolder(state.folder);
+            const ownName = syncFileName(state.vaultId, state.deviceId);
+            const incoming = [];
+            for (const entry of entries) {
+                const match = SYNC_FILE_PATTERN.exec(entry.name);
+                if (!match || match[1] !== state.vaultId || entry.name === ownName) continue;
+                if (entry.size > MAX_SYNC_FILE_BYTES) continue;
+
+                const signature = `${entry.size}:${entry.mtimeMs}`;
+                const known = state.seen.get(entry.name);
+                if (known && known.signature === signature) continue;
+
+                try {
+                    const data = await platform.readFolderFile(state.folder, entry.name, MAX_SYNC_FILE_BYTES);
+                    const parsed = JSON.parse(decryptWithKey(data, syncKeyMaterial(state)));
+                    if (!parsed || parsed.type !== 'sync' || parsed.vaultId !== state.vaultId) continue;
+                    incoming.push({
+                        name: entry.name,
+                        signature,
+                        deviceName: str(parsed.deviceName) || 'Cihaz',
+                        writtenAt: typeof parsed.writtenAt === 'number' ? parsed.writtenAt : entry.mtimeMs,
+                        state: sanitizeState(parsed)
+                    });
+                } catch (e) {
+                    // Still being uploaded by the cloud drive, or not readable: tried again next round
+                }
+            }
+            if (!stillOpen()) return { success: false, error: 'Oturum açık değil.' };
+
+            // 2. Merge into the vault as it is right now. No waiting from here until the vault is
+            //    written, so a save from the UI cannot slip in between.
+            const now = Date.now();
+            let merged = { items: sessionItems, tombstones: state.tombstones };
+            let itemsChanged = false;
+            for (const remote of incoming) {
+                const result = mergeStates(merged, remote.state);
+                merged = { items: result.items, tombstones: result.tombstones };
+                itemsChanged = itemsChanged || result.itemsChanged;
+                state.seen.set(remote.name, {
+                    signature: remote.signature,
+                    deviceName: remote.deviceName,
+                    writtenAt: remote.writtenAt
+                });
+            }
+            // Devices whose file is gone are no longer listed
+            for (const name of [...state.seen.keys()]) {
+                if (!entries.some(entry => entry.name === name)) state.seen.delete(name);
+            }
+
+            const tombstones = pruneTombstones(merged.tombstones, now);
+            if (itemsChanged) {
+                const jsonStr = JSON.stringify(merged.items);
+                if (merged.items.length > MAX_VAULT_ITEMS || utf8ToBytes(jsonStr).length > MAX_VAULT_BYTES) {
+                    throw new Error('Birleştirilen kasa çok büyük.');
+                }
+                store.writeVault(userId, encryptWithKey(jsonStr, currentKey));
+                sessionItems = merged.items;
+            }
+            if (JSON.stringify(tombstones) !== JSON.stringify(state.tombstones)) {
+                state.tombstones = tombstones;
+                saveSync();
+            }
+
+            // 3. Publish this device's state when it differs from what it last wrote
+            const content = JSON.stringify({ items: sessionItems, tombstones: state.tombstones });
+            let ownFile = null;
+            if (content !== state.lastWritten || !entries.some(entry => entry.name === ownName)) {
+                ownFile = encryptWithKey(JSON.stringify({
+                    app: 'OrendaPass',
+                    type: 'sync',
+                    version: 1,
+                    vaultId: state.vaultId,
+                    deviceId: state.deviceId,
+                    deviceName: platform.getDeviceName(),
+                    writtenAt: now,
+                    items: sessionItems,
+                    tombstones: state.tombstones
+                }), syncKeyMaterial(state));
+            }
+
+            state.lastSyncAt = now;
+            state.error = null;
+            if (itemsChanged) tellUiVaultChanged();
+
+            if (ownFile) {
+                await platform.writeFolderFile(state.folder, ownName, ownFile);
+                if (sync === state) state.lastWritten = content;
+            }
+            return { success: true, changed: itemsChanged };
+        } catch (err) {
+            console.error('Sync error:', err.message);
+            if (sync === state) state.error = err.message;
+            return { success: false, error: 'Eşitleme yapılamadı: ' + err.message };
+        }
+    }
+
+    // The keyring lets a new device obtain the sync key with the master password (and key file)
+    async function writeKeyring(state, masterPassword, keyFileSecret) {
+        const keyMaterial = await createKey(masterPassword, keyFileSecret ? copyBytes(keyFileSecret) : null);
+        const encrypted = encryptWithKey(JSON.stringify({
+            app: 'OrendaPass',
+            type: 'sync-keyring',
+            version: 1,
+            vaultId: state.vaultId,
+            key: bytesToBase64(state.key),
+            salt: bytesToBase64(state.salt)
+        }), keyMaterial);
+        wipeKey(keyMaterial);
+        await platform.writeFolderFile(state.folder, keyringName(state.vaultId), encrypted);
+    }
+
+    // After the master password or the key file changed: new devices must join with the current ones
+    async function refreshKeyring(masterPassword) {
+        const state = sync;
+        if (!state) return;
+        try {
+            await writeKeyring(state, masterPassword, currentKey ? currentKey.keyFileSecret : null);
+        } catch (err) {
+            console.error('Keyring update error:', err.message);
+            if (sync === state) state.error = 'Eşitleme anahtarlığı güncellenemedi: ' + err.message;
+        }
+    }
+
+    api.getSyncStatus = () => getSyncStatus();
+
+    api.enableSync = async (masterPassword) => {
+        if (!currentUserId || !currentKey) return { success: false, error: 'Oturum açık değil.' };
+        if (sync) return { success: false, error: 'Eşitleme zaten açık.' };
+
+        const confirmed = await confirmMasterPassword(masterPassword);
+        if (confirmed.error) return { success: false, error: confirmed.error };
+        const { userId, key: sessionKey } = confirmed;
+        const sessionChanged = () => currentUserId !== userId || currentKey !== sessionKey || sync !== null;
+
+        try {
+            const picked = await platform.pickFolder({ title: 'Eşitleme klasörünü seçin (örneğin bulut sürücünüzün içinde)' });
+            if (picked.canceled) return { success: false, canceled: true };
+            const folder = picked.path;
+
+            // Join the sync that already lives in this folder, if the master password opens its keyring
+            const keyrings = (await platform.listFolder(folder))
+                .filter(entry => KEYRING_PATTERN.test(entry.name) && entry.size <= MAX_KEYRING_BYTES);
+            let found = null;
+            for (const entry of keyrings) {
+                try {
+                    const data = await platform.readFolderFile(folder, entry.name, MAX_KEYRING_BYTES);
+                    const keyFileSecret = sessionKey.keyFileSecret ? copyBytes(sessionKey.keyFileSecret) : null;
+                    const parsed = JSON.parse((await decryptWithPassword(data, masterPassword, keyFileSecret)).text);
+                    if (parsed.type !== 'sync-keyring' || parsed.vaultId !== KEYRING_PATTERN.exec(entry.name)[1]) continue;
+                    found = { vaultId: parsed.vaultId, key: base64ToBytes(parsed.key), salt: base64ToBytes(parsed.salt) };
+                    break;
+                } catch (e) {
+                    // protected by another master password or key file
+                }
+            }
+            if (sessionChanged()) return { success: false, error: 'Oturum açık değil.' };
+            if (!found && keyrings.length > 0) {
+                return {
+                    success: false,
+                    error: 'Bu klasördeki eşitleme verisi farklı bir ana şifreyle veya anahtar dosyasıyla korunuyor. ' +
+                        'Katılmak için bu cihazda aynı ana şifreyi kullanın ya da boş bir klasör seçin.'
+                };
+            }
+
+            const state = {
+                vaultId: found ? found.vaultId : bytesToHex(primitives.randomBytes(8)),
+                deviceId: bytesToHex(primitives.randomBytes(8)),
+                folder,
+                key: found ? found.key : primitives.randomBytes(32),
+                salt: found ? found.salt : primitives.randomBytes(32),
+                tombstones: {},
+                seen: new Map(),
+                lastWritten: null,
+                lastSyncAt: null,
+                error: null
+            };
+            if (!found) {
+                await writeKeyring(state, masterPassword, sessionKey.keyFileSecret);
+                if (sessionChanged()) return { success: false, error: 'Oturum açık değil.' };
+            }
+
+            sync = state;
+            saveSync();
+            // A failed first round does not undo the setup; the status carries the error
+            await runSync();
+            return { success: true, joined: Boolean(found), status: getSyncStatus() };
+        } catch (err) {
+            console.error('Enable sync error:', err.message);
+            return { success: false, error: 'Eşitleme açılamadı: ' + err.message };
+        }
+    };
+
+    api.syncNow = async () => {
+        if (!currentUserId || !currentKey || !sync) return { success: false, error: 'Eşitleme açık değil.' };
+        const result = await runSync();
+        return { ...result, status: getSyncStatus() };
+    };
+
+    // Stops syncing on this device. The vault stays as it is; this device's file is removed from the folder.
+    api.disableSync = async () => {
+        if (!currentUserId || !currentKey) return { success: false, error: 'Oturum açık değil.' };
+        if (!sync) return { success: true };
+
+        const { folder, vaultId, deviceId } = sync;
+        try {
+            store.removeSync(currentUserId);
+        } catch (err) {
+            return { success: false, error: 'Eşitleme kapatılamadı: ' + err.message };
+        }
+        dropSync();
+        try {
+            await platform.removeFolderFile(folder, syncFileName(vaultId, deviceId));
+        } catch (e) {
+            // the folder may be unreachable; the leftover file is harmless
+        }
         return { success: true };
     };
 
@@ -1122,6 +1531,8 @@ export function createVaultService({ primitives, storage, platform }) {
         // Automatic lock (inactivity, screen lock, sleep): suspended when a quick unlock PIN is set
         softLock,
         // Resolves once a pending clipboard clear has finished
-        clipboardCleared: () => clipboardClearing
+        clipboardCleared: () => clipboardClearing,
+        // Resolves once a running sync round has finished
+        syncIdle: () => syncRunning || Promise.resolve()
     };
 }

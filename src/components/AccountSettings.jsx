@@ -60,6 +60,14 @@ const UploadIcon = () => (
     </svg>
 );
 
+const SyncIcon = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <polyline points="23 4 23 10 17 10" />
+        <polyline points="1 20 1 14 7 14" />
+        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+    </svg>
+);
+
 const AlertTriangleIcon = () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
@@ -110,6 +118,13 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
     const [quickPinMsg, setQuickPinMsg] = useState({ type: '', msg: '' });
     const [quickPinBusy, setQuickPinBusy] = useState(false);
 
+    // Sync State
+    const [syncStatus, setSyncStatus] = useState({ enabled: false });
+    const [showSyncForm, setShowSyncForm] = useState(false);
+    const [syncPassword, setSyncPassword] = useState('');
+    const [syncMsg, setSyncMsg] = useState({ type: '', msg: '' });
+    const [syncBusy, setSyncBusy] = useState(false);
+
     // Update Check State
     const [updateCheckEnabled, setUpdateCheckEnabled] = useState(() => localStorage.getItem('update_check') !== 'false');
     const [updateStatus, setUpdateStatus] = useState(null);
@@ -136,6 +151,12 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
         }
     }, [backupPreview, backupNeedsPassword]);
 
+    const refreshSyncStatus = () => {
+        if (window.electronAPI && window.electronAPI.getSyncStatus) {
+            window.electronAPI.getSyncStatus().then(res => setSyncStatus(res)).catch(() => {});
+        }
+    };
+
     const refreshKeyFileStatus = () => {
         if (window.electronAPI && window.electronAPI.getKeyFileStatus) {
             window.electronAPI.getKeyFileStatus().then(res => setKeyFileStatus(res)).catch(() => {});
@@ -161,9 +182,13 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
         }
         refreshAutoBackups();
         refreshKeyFileStatus();
+        refreshSyncStatus();
+        // Sync also runs on its own in the background: keep the shown status current
+        const syncStatusTimer = setInterval(refreshSyncStatus, 10000);
         if (window.electronAPI && window.electronAPI.getQuickPinStatus) {
             window.electronAPI.getQuickPinStatus().then(res => setQuickPinEnabled(res.enabled)).catch(() => {});
         }
+        return () => clearInterval(syncStatusTimer);
     }, []);
 
     // Change Master Password
@@ -281,6 +306,59 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
             setKeyFileMsg({ type: 'error', msg: err.message });
         } finally {
             setKeyFileBusy(false);
+        }
+    };
+
+    // Sync: Enable (the folder is picked in a dialog opened by the main process)
+    const handleEnableSync = async (e) => {
+        e.preventDefault();
+        setSyncBusy(true);
+        setSyncMsg({ type: '', msg: '' });
+        try {
+            const res = await window.electronAPI.enableSync(syncPassword);
+            if (res.success) {
+                setSyncStatus(res.status);
+                setShowSyncForm(false);
+                setSyncPassword('');
+                setSyncMsg({ type: 'success', msg: res.joined ? texts.syncEnabledJoined : texts.syncEnabledNew });
+            } else if (!res.canceled) {
+                setSyncMsg({ type: 'error', msg: res.error });
+            }
+        } catch (err) {
+            setSyncMsg({ type: 'error', msg: err.message });
+        } finally {
+            setSyncBusy(false);
+        }
+    };
+
+    const handleSyncNow = async () => {
+        setSyncBusy(true);
+        setSyncMsg({ type: '', msg: '' });
+        try {
+            const res = await window.electronAPI.syncNow();
+            if (res.status) setSyncStatus(res.status);
+            setSyncMsg(res.success ? { type: 'success', msg: texts.syncDone } : { type: 'error', msg: res.error });
+        } catch (err) {
+            setSyncMsg({ type: 'error', msg: err.message });
+        } finally {
+            setSyncBusy(false);
+        }
+    };
+
+    const handleDisableSync = async () => {
+        setSyncBusy(true);
+        try {
+            const res = await window.electronAPI.disableSync();
+            if (res.success) {
+                setSyncStatus({ enabled: false });
+                setSyncMsg({ type: 'success', msg: texts.syncDisabled });
+            } else {
+                setSyncMsg({ type: 'error', msg: res.error });
+            }
+        } catch (err) {
+            setSyncMsg({ type: 'error', msg: err.message });
+        } finally {
+            setSyncBusy(false);
         }
     };
 
@@ -793,6 +871,91 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
                                     setQuickPinPassword('');
                                     setQuickPinValue('');
                                     setQuickPinConfirm('');
+                                }}
+                            >
+                                {texts.btnCancel}
+                            </button>
+                        </div>
+                    </form>
+                )}
+            </div>
+
+            {/* SYNC BETWEEN DEVICES SECTION */}
+            <div className="settings-section">
+                <div className="section-title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3><SyncIcon /> {texts.syncTitle}</h3>
+                    <span className={`badge ${syncStatus.enabled ? 'badge-success' : 'badge-muted'}`}>
+                        {syncStatus.enabled ? texts.keyFileEnabledBadge : texts.keyFileDisabledBadge}
+                    </span>
+                </div>
+                <p className="section-subtitle">{texts.syncDesc}</p>
+                <p className="section-subtitle">{texts.syncHint}</p>
+
+                {syncMsg.msg && (
+                    <div className={`status-message ${syncMsg.type}`}>
+                        {syncMsg.msg}
+                    </div>
+                )}
+
+                {syncStatus.enabled ? (
+                    <>
+                        <div className="sync-details">
+                            <div><span className="sub">{texts.syncFolder}</span> <code>{syncStatus.folder}</code></div>
+                            <div>
+                                <span className="sub">{texts.syncLastSync}</span>{' '}
+                                {syncStatus.lastSyncAt ? formatBackupDate(syncStatus.lastSyncAt) : texts.syncNever}
+                            </div>
+                            <div>
+                                <span className="sub">{texts.syncDevices}</span>{' '}
+                                {syncStatus.devices && syncStatus.devices.length > 0
+                                    ? syncStatus.devices.map(device => `${device.name} (${formatBackupDate(device.lastSeenAt)})`).join(', ')
+                                    : texts.syncNoDevices}
+                            </div>
+                        </div>
+                        {syncStatus.error && (
+                            <div className="status-message error">{texts.syncErrorLabel} {syncStatus.error}</div>
+                        )}
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '0.5rem' }}>
+                            <button className="btn-primary" onClick={handleSyncNow} disabled={syncBusy} style={{ width: 'auto' }}>
+                                {syncBusy ? texts.updating : texts.syncNowBtn}
+                            </button>
+                            <button className="btn-danger" onClick={handleDisableSync} disabled={syncBusy} style={{ width: 'auto' }}>
+                                {texts.syncDisableBtn}
+                            </button>
+                        </div>
+                    </>
+                ) : !showSyncForm ? (
+                    <button
+                        className="btn-primary"
+                        onClick={() => {
+                            setShowSyncForm(true);
+                            setSyncMsg({ type: '', msg: '' });
+                        }}
+                        style={{ width: 'auto', marginTop: '0.5rem' }}
+                    >
+                        {texts.syncEnableBtn}
+                    </button>
+                ) : (
+                    <form onSubmit={handleEnableSync} className="disable-2fa-form">
+                        <label className="input-label">{texts.syncEnableConfirm}</label>
+                        <div className="input-with-action">
+                            <input
+                                type="password"
+                                placeholder={texts.masterPassword}
+                                value={syncPassword}
+                                onChange={e => setSyncPassword(e.target.value)}
+                                autoFocus
+                                required
+                            />
+                            <button type="submit" className="btn-primary" disabled={syncBusy} style={{ width: 'auto' }}>
+                                {syncBusy ? texts.updating : texts.syncChooseFolderBtn}
+                            </button>
+                            <button
+                                type="button"
+                                className="btn-secondary"
+                                onClick={() => {
+                                    setShowSyncForm(false);
+                                    setSyncPassword('');
                                 }}
                             >
                                 {texts.btnCancel}

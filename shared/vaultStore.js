@@ -207,6 +207,17 @@ export function createVaultStore(storage, primitives) {
     const writeQuickPin = (userId, encryptedBytes) => storage.write(getQuickPinName(userId), encryptedBytes);
     const removeQuickPin = (userId) => storage.remove(getQuickPinName(userId));
 
+    // ---------------- Sync settings (folder, sync key, removed entries) ----------------
+
+    function getSyncName(userId) {
+        requireValidUserId(userId);
+        return `sync_${userId}.enc`;
+    }
+
+    const readSync = (userId) => storage.read(getSyncName(userId));
+    const writeSync = (userId, encryptedBytes) => storage.write(getSyncName(userId), encryptedBytes);
+    const removeSync = (userId) => storage.remove(getSyncName(userId));
+
     // ---------------- Automatic backups ----------------
     // Each backup is a copy of the encrypted vault file, so it is protected by the master password.
 
@@ -305,6 +316,9 @@ export function createVaultStore(storage, primitives) {
         readQuickPin,
         writeQuickPin,
         removeQuickPin,
+        readSync,
+        writeSync,
+        removeSync,
         listAutoBackups,
         createAutoBackup,
         readAutoBackup,
