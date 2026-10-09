@@ -1,5 +1,13 @@
 apply plugin: 'com.android.application'
 
+// The signing key lives outside the repository; android/keystore.properties points to it.
+// Without that file a build is signed with Android's debug key, as usual.
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('keystore.properties')
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+}
+
 android {
     namespace = "com.yigit.orendapass"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -16,8 +24,23 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (keystorePropertiesFile.exists()) {
+            release {
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            }
+        }
+    }
     buildTypes {
+        // Debug builds carry the same signature, so a test build can be updated to a release
+        debug {
+            if (keystorePropertiesFile.exists()) signingConfig signingConfigs.release
+        }
         release {
+            if (keystorePropertiesFile.exists()) signingConfig signingConfigs.release
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
