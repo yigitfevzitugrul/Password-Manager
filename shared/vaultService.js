@@ -70,8 +70,10 @@ const keyringName = (vaultId) => `orenda-sync-${vaultId}.opkeyring`;
 const MAX_SYNC_FILE_BYTES = 50 * 1024 * 1024;
 const MAX_KEYRING_BYTES = 64 * 1024;
 const SYNC_AFTER_UNLOCK_MS = 1500;
-const SYNC_AFTER_SAVE_MS = 3000;
-const SYNC_INTERVAL_MS = 60 * 1000;
+const SYNC_AFTER_SAVE_MS = 1000;
+const SYNC_INTERVAL_MS = 20 * 1000;
+// The app came to the front: sync at once, unless it just did
+const SYNC_ON_ACTIVE_MIN_GAP_MS = 5000;
 
 const RELEASES_API_PATH = '/repos/yigitfevzitugrul/Password-Manager/releases/latest';
 const RELEASES_PAGE_URL = 'https://github.com/yigitfevzitugrul/Password-Manager/releases/latest';
@@ -1039,6 +1041,14 @@ export function createVaultService({ primitives, storage, platform }) {
         };
     }
 
+    // The user is looking at the app again (window focused, app back in the foreground):
+    // do not make them wait for the next regular round
+    function syncSoon() {
+        if (!sync || !currentUserId || !currentKey || syncRunning) return;
+        if (sync.lastSyncAt && Date.now() - sync.lastSyncAt < SYNC_ON_ACTIVE_MIN_GAP_MS) return;
+        scheduleSync(0);
+    }
+
     // One sync at a time; a request that arrives meanwhile triggers another round afterwards
     function runSync() {
         if (!sync || !currentUserId || !currentKey) return Promise.resolve({ success: false, error: 'Eşitleme açık değil.' });
@@ -1692,6 +1702,8 @@ export function createVaultService({ primitives, storage, platform }) {
         // Resolves once a pending clipboard clear has finished
         clipboardCleared: () => clipboardClearing,
         // Resolves once a running sync round has finished
-        syncIdle: () => syncRunning || Promise.resolve()
+        syncIdle: () => syncRunning || Promise.resolve(),
+        // The app became active again: sync now instead of at the next regular round
+        syncSoon
     };
 }

@@ -190,6 +190,9 @@ app.whenReady().then(() => {
   });
   exposeToPage(vault.api);
 
+  // Coming back to the window: changes from other devices should be there without waiting
+  app.on('browser-window-focus', () => vault.syncSoon());
+
   powerMonitor.on('lock-screen', () => vault.softLock(true));
   powerMonitor.on('suspend', () => vault.softLock(true));
 

@@ -164,6 +164,48 @@ test('two devices stay in sync through one Google Drive, and a third joins from 
     phone.lock(false);
 });
 
+test('coming back to the app syncs at once, but not over and over', async () => {
+    const drive = createFakeDrive();
+    const computer = driveDevice(drive);
+    const phone = driveDevice(drive);
+    computer.ui.opened(await computer.api.register({ firstName: 'Ada', lastName: 'Yılmaz', password: PASSWORD }));
+    assert.equal((await computer.api.enableSync(PASSWORD, 'drive')).success, true);
+    phone.ui.opened(await phone.api.joinSyncedAccount(PASSWORD, 'drive'));
+
+    await computer.ui.save([{ id: 'e1', title: 'GitHub', username: 'ada', password: 'gh-1' }]);
+    await computer.api.syncNow();
+
+    const settle = async (device) => {
+        await new Promise(resolve => setTimeout(resolve, 20));
+        await device.syncIdle();
+    };
+    // the phone synced a moment ago (when it joined): activating it again right away asks Drive nothing
+    let before = drive.requests.length;
+    phone.syncSoon();
+    await settle(phone);
+    assert.equal(drive.requests.length, before);
+    assert.deepEqual(phone.ui.items, []);
+
+    // later the user returns to the app: the entry is there without pressing anything
+    const realNow = Date.now;
+    Date.now = () => realNow() + 60 * 1000;
+    try {
+        phone.syncSoon();
+        await settle(phone);
+    } finally {
+        Date.now = realNow;
+    }
+    assert.deepEqual(phone.ui.items.map(item => item.title), ['GitHub']);
+
+    // locked: nothing happens
+    phone.lock(false);
+    before = drive.requests.length;
+    phone.syncSoon();
+    await settle(phone);
+    assert.equal(drive.requests.length, before);
+    computer.lock(false);
+});
+
 test('another account in the same Google Drive gets its own vault next to the first', async () => {
     const drive = createFakeDrive();
     const first = driveDevice(drive);

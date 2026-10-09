@@ -38,6 +38,12 @@ export async function installWebHost() {
         onVaultChanged: copied(host.onVaultChanged)
     };
 
+    // Back in the foreground: changes from other devices should be there without waiting
+    // (timers stand still while a phone keeps the app in the background)
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') vault.syncSoon();
+    });
+
     // Leaving the page locks the vault (the key only ever lives in memory)
     window.addEventListener('pagehide', () => vault.lock(false));
 }
