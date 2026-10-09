@@ -3928,6 +3928,21 @@ button {
     display: none;
   }
 
+  /* --- Password field on its own row, its buttons below it --- */
+  .input-with-action {
+    flex-wrap: wrap;
+  }
+
+  .input-with-action input {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .input-with-action button {
+    flex: 1 1 0;
+    white-space: nowrap;
+  }
+
   /* --- Dialogs come up from the bottom over the full width --- */
   .modal-overlay {
     align-items: flex-end;
