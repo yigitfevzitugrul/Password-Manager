@@ -35,9 +35,7 @@ export async function installWebHost() {
     window.electronAPI = {
         ...api,
         onVaultLocked: host.onLocked,
-        onVaultChanged: copied(host.onVaultChanged),
-        // What this host cannot do; the page hides those parts
-        hostFeatures: { folderSync: false }
+        onVaultChanged: copied(host.onVaultChanged)
     };
 
     // Leaving the page locks the vault (the key only ever lives in memory)

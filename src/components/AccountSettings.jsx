@@ -4,8 +4,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { evaluateMasterPassword, MASTER_PASSWORD_MIN_LENGTH } from '../utils/masterPasswordStrength';
 import { AUTO_LOCK_OPTIONS, CLIPBOARD_CLEAR_OPTIONS } from '../utils/securityTimers';
 
-// Hosts that cannot reach a sync folder say so (see src/host/webHost.js)
-const canSyncThroughFolder = () => !(window.electronAPI && window.electronAPI.hostFeatures && window.electronAPI.hostFeatures.folderSync === false);
+// What the vault service stores as the folder of a vault synced through Google Drive
+const DRIVE_FOLDER = 'gdrive:appdata';
 
 const LockIcon = () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -127,6 +127,9 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
     const [syncPassword, setSyncPassword] = useState('');
     const [syncMsg, setSyncMsg] = useState({ type: '', msg: '' });
     const [syncBusy, setSyncBusy] = useState(false);
+    // Where this device can sync to ('folder', 'drive'), and which one the user picked
+    const [syncTargets, setSyncTargets] = useState([]);
+    const [syncTarget, setSyncTarget] = useState(null);
 
     // Update Check State
     const [updateCheckEnabled, setUpdateCheckEnabled] = useState(() => localStorage.getItem('update_check') !== 'false');
@@ -186,6 +189,12 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
         refreshAutoBackups();
         refreshKeyFileStatus();
         refreshSyncStatus();
+        if (window.electronAPI && window.electronAPI.getSyncTargets) {
+            window.electronAPI.getSyncTargets().then(targets => {
+                setSyncTargets(targets || []);
+                setSyncTarget((targets || [])[0] || null);
+            }).catch(() => {});
+        }
         // Sync also runs on its own in the background: keep the shown status current
         const syncStatusTimer = setInterval(refreshSyncStatus, 10000);
         if (window.electronAPI && window.electronAPI.getQuickPinStatus) {
@@ -318,12 +327,15 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
         setSyncBusy(true);
         setSyncMsg({ type: '', msg: '' });
         try {
-            const res = await window.electronAPI.enableSync(syncPassword);
+            const res = await window.electronAPI.enableSync(syncPassword, syncTarget);
             if (res.success) {
                 setSyncStatus(res.status);
                 setShowSyncForm(false);
                 setSyncPassword('');
-                setSyncMsg({ type: 'success', msg: res.joined ? texts.syncEnabledJoined : texts.syncEnabledNew });
+                setSyncMsg({
+                    type: 'success',
+                    msg: res.joined ? texts.syncEnabledJoined : syncTarget === 'drive' ? texts.syncEnabledNewDrive : texts.syncEnabledNew
+                });
             } else if (!res.canceled) {
                 setSyncMsg({ type: 'error', msg: res.error });
             }
@@ -341,6 +353,21 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
             const res = await window.electronAPI.syncNow();
             if (res.status) setSyncStatus(res.status);
             setSyncMsg(res.success ? { type: 'success', msg: texts.syncDone } : { type: 'error', msg: res.error });
+        } catch (err) {
+            setSyncMsg({ type: 'error', msg: err.message });
+        } finally {
+            setSyncBusy(false);
+        }
+    };
+
+    const handleReconnectSync = async () => {
+        setSyncBusy(true);
+        setSyncMsg({ type: '', msg: '' });
+        try {
+            const res = await window.electronAPI.reconnectSync();
+            if (res.status) setSyncStatus(res.status);
+            if (res.success) setSyncMsg({ type: 'success', msg: texts.syncDone });
+            else if (!res.canceled) setSyncMsg({ type: 'error', msg: res.error });
         } catch (err) {
             setSyncMsg({ type: 'error', msg: err.message });
         } finally {
@@ -884,14 +911,16 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
             </div>
 
             {/* SYNC BETWEEN DEVICES SECTION */}
-            <div className="settings-section" hidden={!canSyncThroughFolder()}>
+            <div className="settings-section" hidden={syncTargets.length === 0 && !syncStatus.enabled}>
                 <div className="section-title-row" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <h3><SyncIcon /> {texts.syncTitle}</h3>
                     <span className={`badge ${syncStatus.enabled ? 'badge-success' : 'badge-muted'}`}>
                         {syncStatus.enabled ? texts.keyFileEnabledBadge : texts.keyFileDisabledBadge}
                     </span>
                 </div>
-                <p className="section-subtitle">{texts.syncDesc}</p>
+                <p className="section-subtitle">
+                    {syncTargets.includes('folder') ? texts.syncDesc : texts.syncDescDrive}
+                </p>
                 <p className="section-subtitle">{texts.syncHint}</p>
 
                 {syncMsg.msg && (
@@ -903,7 +932,11 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
                 {syncStatus.enabled ? (
                     <>
                         <div className="sync-details">
-                            <div><span className="sub">{texts.syncFolder}</span> <code>{syncStatus.folder}</code></div>
+                            {syncStatus.folder === DRIVE_FOLDER ? (
+                                <div><span className="sub">{texts.syncVia}</span> Google Drive</div>
+                            ) : (
+                                <div><span className="sub">{texts.syncFolder}</span> <code>{syncStatus.folder}</code></div>
+                            )}
                             <div>
                                 <span className="sub">{texts.syncLastSync}</span>{' '}
                                 {syncStatus.lastSyncAt ? formatBackupDate(syncStatus.lastSyncAt) : texts.syncNever}
@@ -922,6 +955,11 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
                             <button className="btn-primary" onClick={handleSyncNow} disabled={syncBusy} style={{ width: 'auto' }}>
                                 {syncBusy ? texts.updating : texts.syncNowBtn}
                             </button>
+                            {syncStatus.error && syncStatus.folder === DRIVE_FOLDER && (
+                                <button className="btn-secondary" onClick={handleReconnectSync} disabled={syncBusy} style={{ width: 'auto' }}>
+                                    {texts.syncReconnectBtn}
+                                </button>
+                            )}
                             <button className="btn-danger" onClick={handleDisableSync} disabled={syncBusy} style={{ width: 'auto' }}>
                                 {texts.syncDisableBtn}
                             </button>
@@ -940,7 +978,25 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
                     </button>
                 ) : (
                     <form onSubmit={handleEnableSync} className="disable-2fa-form">
-                        <label className="input-label">{texts.syncEnableConfirm}</label>
+                        {syncTargets.length > 1 && (
+                            <div className="sync-target-choice" role="radiogroup">
+                                {syncTargets.map(target => (
+                                    <button
+                                        key={target}
+                                        type="button"
+                                        role="radio"
+                                        aria-checked={syncTarget === target}
+                                        className={`sync-target-option ${syncTarget === target ? 'active' : ''}`}
+                                        onClick={() => setSyncTarget(target)}
+                                    >
+                                        {target === 'drive' ? texts.syncTargetDrive : texts.syncTargetFolder}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                        <label className="input-label">
+                            {syncTarget === 'drive' ? texts.syncEnableConfirmDrive : texts.syncEnableConfirm}
+                        </label>
                         <div className="input-with-action">
                             <input
                                 type="password"
@@ -951,7 +1007,7 @@ function AccountSettings({ currentUser, passwords = [], onSave, onReplaceAll, th
                                 required
                             />
                             <button type="submit" className="btn-primary" disabled={syncBusy} style={{ width: 'auto' }}>
-                                {syncBusy ? texts.updating : texts.syncChooseFolderBtn}
+                                {syncBusy ? texts.updating : syncTarget === 'drive' ? texts.syncConnectDriveBtn : texts.syncChooseFolderBtn}
                             </button>
                             <button
                                 type="button"

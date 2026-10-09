@@ -19,7 +19,8 @@
  *       readFile(path, maxBytes) -> Promise<Uint8Array>   a file the user picked earlier (key file)
  *       notifyVaultChanged({ items, revision })          entries changed without the UI asking (sync)
  *       getDeviceName() -> string
- *       pickFolder({ title }) -> Promise<{ canceled } | { canceled: false, path }>
+ *       syncTargets() -> ('folder' | 'drive')[]         where this host can sync to (optional: ['folder'])
+ *       pickFolder({ title, target }) -> Promise<{ canceled } | { canceled: false, path }>
  *       listFolder(path) -> Promise<{ name, size, mtimeMs }[]>
  *       readFolderFile(path, name, maxBytes) -> Promise<Uint8Array>
  *       writeFolderFile(path, name, bytes) -> Promise
@@ -33,6 +34,7 @@ import { createVaultStore } from './vaultStore.js';
 import { createTotp } from './totp.js';
 import { generateKeyFile, parseKeyFile, MAX_KEY_FILE_BYTES } from './keyFile.js';
 import { ensureItemIds, applyUiChanges, mergeStates, sanitizeState, pruneTombstones } from './vaultSync.js';
+import { isDriveFolder } from './driveFolder.js';
 
 const MAX_2FA_ATTEMPTS = 5;
 const MIN_MASTER_PASSWORD_LENGTH = 12; // for new passwords; existing shorter ones still log in
@@ -1237,7 +1239,19 @@ export function createVaultService({ primitives, storage, platform }) {
 
     api.getSyncStatus = () => getSyncStatus();
 
-    api.enableSync = async (masterPassword) => {
+    // Where this device can sync to: a folder the user picks and/or their Google Drive
+    const syncTargets = () => (platform.syncTargets ? platform.syncTargets() : ['folder']);
+    api.getSyncTargets = () => syncTargets();
+
+    function checkSyncTarget(target) {
+        const targets = syncTargets();
+        const chosen = target === undefined || target === null ? targets[0] : target;
+        return targets.includes(chosen) ? chosen : null;
+    }
+
+    api.enableSync = async (masterPassword, target) => {
+        const syncTarget = checkSyncTarget(target);
+        if (!syncTarget) return { success: false, error: 'Bu cihazda bu eşitleme yöntemi kullanılamıyor.' };
         if (!currentUserId || !currentKey) return { success: false, error: 'Oturum açık değil.' };
         if (sync) return { success: false, error: 'Eşitleme zaten açık.' };
 
@@ -1247,14 +1261,18 @@ export function createVaultService({ primitives, storage, platform }) {
         const sessionChanged = () => currentUserId !== userId || currentKey !== sessionKey || sync !== null;
 
         try {
-            const picked = await platform.pickFolder({ title: 'Eşitleme klasörünü seçin (örneğin bulut sürücünüzün içinde)' });
+            const picked = await platform.pickFolder({
+                title: 'Eşitleme klasörünü seçin (örneğin bulut sürücünüzün içinde)',
+                target: syncTarget
+            });
             if (picked.canceled) return { success: false, canceled: true };
             const folder = picked.path;
 
             // Join the sync that already lives in this folder, if the master password opens its keyring
             const { found, count } = await openKeyring(folder, masterPassword, sessionKey.keyFileSecret);
             if (sessionChanged()) return { success: false, error: 'Oturum açık değil.' };
-            if (!found && count > 0) {
+            // (the user's Drive may hold the vaults of several accounts next to each other)
+            if (!found && count > 0 && syncTarget !== 'drive') {
                 return {
                     success: false,
                     error: 'Bu klasördeki eşitleme verisi farklı bir ana şifreyle veya anahtar dosyasıyla korunuyor. ' +
@@ -1281,7 +1299,9 @@ export function createVaultService({ primitives, storage, platform }) {
 
     // Login screen: "my account is already on another device". Creates the account on this device
     // from the sync folder: same name, same master password (and key file), same entries.
-    api.joinSyncedAccount = async (masterPassword) => {
+    api.joinSyncedAccount = async (masterPassword, target) => {
+        const syncTarget = checkSyncTarget(target);
+        if (!syncTarget) return { success: false, error: 'Bu cihazda bu eşitleme yöntemi kullanılamıyor.' };
         const now = Date.now();
         if (now < lockoutUntil) {
             const remainingSeconds = Math.ceil((lockoutUntil - now) / 1000);
@@ -1293,7 +1313,10 @@ export function createVaultService({ primitives, storage, platform }) {
         }
 
         try {
-            const picked = await platform.pickFolder({ title: 'Diğer cihazınızda seçtiğiniz eşitleme klasörünü seçin' });
+            const picked = await platform.pickFolder({
+                title: 'Diğer cihazınızda seçtiğiniz eşitleme klasörünü seçin',
+                target: syncTarget
+            });
             if (picked.canceled) return { success: false, canceled: true };
             const folder = picked.path;
 
@@ -1303,7 +1326,9 @@ export function createVaultService({ primitives, storage, platform }) {
             if (opened.count === 0) {
                 return {
                     success: false,
-                    error: 'Bu klasörde eşitleme verisi bulunamadı. Diğer cihazınızda eşitlemeyi açarken seçtiğiniz klasörü seçin.'
+                    error: syncTarget === 'drive'
+                        ? 'Bu Google hesabında eşitleme verisi bulunamadı. Diğer cihazınızda eşitlemeyi açarken kullandığınız Google hesabını seçin.'
+                        : 'Bu klasörde eşitleme verisi bulunamadı. Diğer cihazınızda eşitlemeyi açarken seçtiğiniz klasörü seçin.'
                 };
             }
             if (!opened.found && opened.keyFileNeeded) {
@@ -1374,6 +1399,23 @@ export function createVaultService({ primitives, storage, platform }) {
 
     api.syncNow = async () => {
         if (!currentUserId || !currentKey || !sync) return { success: false, error: 'Eşitleme açık değil.' };
+        const result = await runSync();
+        return { ...result, status: getSyncStatus() };
+    };
+
+    // Google no longer accepts this device's access (revoked, or signed out): ask the user again
+    api.reconnectSync = async () => {
+        if (!currentUserId || !currentKey || !sync) return { success: false, error: 'Eşitleme açık değil.' };
+        const state = sync;
+        if (isDriveFolder(state.folder)) {
+            try {
+                const picked = await platform.pickFolder({ title: '', target: 'drive' });
+                if (picked.canceled) return { success: false, canceled: true };
+            } catch (err) {
+                return { success: false, error: err.message };
+            }
+            if (sync !== state) return { success: false, error: 'Eşitleme açık değil.' };
+        }
         const result = await runSync();
         return { ...result, status: getSyncStatus() };
     };

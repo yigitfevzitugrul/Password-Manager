@@ -2683,6 +2683,31 @@ button {
   text-align: left;
 }
 
+.sync-target-choice {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 0.75rem;
+}
+
+.sync-target-option {
+  flex: 1;
+  padding: 9px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.sync-target-option.active {
+  background: var(--accent-muted);
+  border-color: var(--border-focus);
+  color: var(--accent-light);
+}
+
 .sync-details {
   display: flex;
   flex-direction: column;

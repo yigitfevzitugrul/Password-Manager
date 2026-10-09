@@ -39,9 +39,11 @@ const API_METHODS = [
     'copyToClipboard',
     'setClipboardClearSeconds',
     'getSyncStatus',
+    'getSyncTargets',
     'enableSync',
     'joinSyncedAccount',
     'syncNow',
+    'reconnectSync',
     'disableSync'
 ];
 

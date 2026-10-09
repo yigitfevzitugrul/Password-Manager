@@ -6,7 +6,12 @@ import { Clipboard } from '@capacitor/clipboard';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { App } from '@capacitor/app';
+import { registerPlugin } from '@capacitor/core';
 import { bytesToBase64, base64ToBytes } from '../../shared/bytes.js';
+import { addDriveSync } from '../../shared/driveFolder.js';
+
+// android/app/src/main/java/com/yigit/orendapass/GoogleDrivePlugin.java
+const GoogleDrive = registerPlugin('GoogleDrive');
 
 const SAVE_FOLDER = 'OrendaPass';
 const SAVED_PREFIX = 'documents:';
@@ -78,6 +83,33 @@ export function addNativeServices(platform) {
     App.addListener('backButton', () => {
         const event = new CustomEvent('app-back', { cancelable: true });
         if (window.dispatchEvent(event)) App.minimizeApp();
+    });
+
+    // Sync through the user's Google Drive. Google Play services keeps the sign-in; the page
+    // only ever holds a short-lived access token, and only in memory.
+    let driveToken = null;
+    addDriveSync(platform, {
+        connect: async () => {
+            const result = await GoogleDrive.authorize({ interactive: true });
+            if (result.canceled || !result.token) return false;
+            driveToken = result.token;
+            return true;
+        },
+        getAccessToken: async ({ refresh }) => {
+            if (refresh && driveToken) {
+                await GoogleDrive.clearToken({ token: driveToken });
+                driveToken = null;
+            }
+            if (!driveToken) {
+                const result = await GoogleDrive.authorize({ interactive: false });
+                if (result.canceled || !result.token) {
+                    throw new Error('Google Drive bağlantısı kesildi. Ayarlardan yeniden bağlanın.');
+                }
+                driveToken = result.token;
+            }
+            return driveToken;
+        },
+        fetch: (url, options) => fetch(url, options)
     });
 
     return platform;

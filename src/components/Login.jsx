@@ -1,9 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { evaluateMasterPassword, MASTER_PASSWORD_MIN_LENGTH } from '../utils/masterPasswordStrength';
 
-// Hosts that cannot reach a sync folder say so (see src/host/webHost.js)
-const canSyncThroughFolder = () => !(window.electronAPI && window.electronAPI.hostFeatures && window.electronAPI.hostFeatures.folderSync === false);
-
 const ShieldIcon = () => (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -102,6 +99,12 @@ function Login({ onLogin, texts, notice }) {
     // Adding an account that already exists on another device (through its sync folder)
     const [isJoinMode, setIsJoinMode] = useState(false);
     const [joinPassword, setJoinPassword] = useState('');
+    // Where this device can sync to ('folder', 'drive'); the account is added from one of them
+    const [syncTargets, setSyncTargets] = useState([]);
+    useEffect(() => {
+        if (!window.electronAPI || !window.electronAPI.getSyncTargets) return;
+        window.electronAPI.getSyncTargets().then(targets => setSyncTargets(targets || [])).catch(() => {});
+    }, []);
 
     // Quick unlock with PIN after an automatic lock
     const [quickUnlock, setQuickUnlock] = useState(null);
@@ -263,15 +266,14 @@ function Login({ onLogin, texts, notice }) {
 
     // --- ADD THE ACCOUNT FROM ANOTHER DEVICE ---
     // The folder (and, if the account uses one, the key file) is asked for by the main process.
-    const handleJoinSyncedAccount = async (e) => {
-        e.preventDefault();
-        if (!window.electronAPI || !window.electronAPI.joinSyncedAccount) return;
+    const handleJoinSyncedAccount = async (target) => {
+        if (!window.electronAPI || !window.electronAPI.joinSyncedAccount || !joinPassword) return;
 
         setLoading(true);
         setError('');
 
         try {
-            const res = await window.electronAPI.joinSyncedAccount(joinPassword);
+            const res = await window.electronAPI.joinSyncedAccount(joinPassword, target);
             if (res.success) {
                 onLogin(res.data || [], res.user, res.revision);
             } else if (!res.canceled) {
@@ -292,7 +294,7 @@ function Login({ onLogin, texts, notice }) {
         setError('');
     };
 
-    const joinAccountLink = canSyncThroughFolder() && (
+    const joinAccountLink = syncTargets.length > 0 && (
         <div className="auth-switch-footer">
             <span className="auth-switch-text">{texts ? texts.joinAccountQuestion : ''}</span>
             <button type="button" className="auth-link-btn" onClick={openJoinMode}>
@@ -458,9 +460,9 @@ function Login({ onLogin, texts, notice }) {
                 {isJoinMode ? (
                     <div>
                         <h2>{texts.joinAccountTitle}</h2>
-                        <p>{texts.joinAccountDesc}</p>
+                        <p>{syncTargets.includes('folder') ? texts.joinAccountDesc : texts.joinAccountDescDrive}</p>
 
-                        <form onSubmit={handleJoinSyncedAccount}>
+                        <form onSubmit={(e) => { e.preventDefault(); handleJoinSyncedAccount(syncTargets[0]); }}>
                             <div className="input-group">
                                 <label className="input-label">{texts.masterPassword || 'Ana Şifre'}</label>
                                 <input
@@ -475,9 +477,18 @@ function Login({ onLogin, texts, notice }) {
 
                             {error && <div className="error-message">{error}</div>}
 
-                            <button type="submit" disabled={loading || !joinPassword} className="btn-primary">
-                                {loading ? texts.updating : texts.joinAccountBtn}
-                            </button>
+                            {syncTargets.map((target, index) => (
+                                <button
+                                    key={target}
+                                    type={index === 0 ? 'submit' : 'button'}
+                                    onClick={index === 0 ? undefined : () => handleJoinSyncedAccount(target)}
+                                    disabled={loading || !joinPassword}
+                                    className={index === 0 ? 'btn-primary' : 'btn-secondary'}
+                                    style={index === 0 ? undefined : { marginTop: '0.75rem', width: '100%' }}
+                                >
+                                    {loading ? texts.updating : target === 'drive' ? texts.joinAccountDriveBtn : texts.joinAccountBtn}
+                                </button>
+                            ))}
 
                             <button
                                 type="button"

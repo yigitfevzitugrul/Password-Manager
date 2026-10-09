@@ -34,3 +34,7 @@ cache
 
 # OS
 Thumbs.db
+
+# This build's Google client for Drive sync (see electron/googleDrive.cjs)
+electron/google-oauth.json
+google-oauth*.json

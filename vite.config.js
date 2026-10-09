@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 const { version } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
 
 // On desktop every request goes through the main process; the mobile app's page makes them itself.
-const MOBILE_CONNECT_SRC = 'https://api.pwnedpasswords.com https://api.github.com'
+const MOBILE_CONNECT_SRC = 'https://api.pwnedpasswords.com https://api.github.com https://www.googleapis.com'
 
 // https://vitejs.dev/config/
 // The dev server needs inline/eval scripts for HMR; the packaged app must not allow them.

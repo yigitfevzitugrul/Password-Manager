@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Menu, shell, session, powerMonitor } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu, shell, session, powerMonitor, safeStorage } = require('electron');
 const path = require('path');
 const { fileURLToPath } = require('url');
 const fs = require('fs');
@@ -7,6 +7,8 @@ const { createVaultService } = require('../shared/vaultService.js');
 const nodePrimitives = require('./nodePrimitives.cjs');
 const { createNodeStorage } = require('./nodeStorage.cjs');
 const { createDesktopPlatform } = require('./desktopPlatform.cjs');
+const { addDriveSync } = require('../shared/driveFolder.js');
+const { createGoogleDrive } = require('./googleDrive.cjs');
 
 process.env.DIST = path.join(__dirname, '../dist');
 process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : path.join(__dirname, '../public');
@@ -171,10 +173,20 @@ app.whenReady().then(() => {
 
   createWindow();
 
+  const platform = createDesktopPlatform(() => win);
+  // Sync through Google Drive is offered when this build knows its Google client (see googleDrive.cjs)
+  const googleDrive = createGoogleDrive({
+    configPath: path.join(__dirname, 'google-oauth.json'),
+    tokenPath: path.join(app.getPath('userData'), 'google-drive.token'),
+    openExternal: (url) => shell.openExternal(url),
+    safeStorage
+  });
+  if (googleDrive.available) addDriveSync(platform, googleDrive);
+
   const vault = createVaultService({
     primitives: nodePrimitives,
     storage: createNodeStorage(app.getPath('userData')),
-    platform: createDesktopPlatform(() => win)
+    platform
   });
   exposeToPage(vault.api);
 

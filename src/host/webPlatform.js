@@ -146,6 +146,8 @@ export function createWebPlatform() {
             return Uint8Array.from(data);
         },
 
+        // A page has no folders to sync through (the mobile app adds Google Drive)
+        syncTargets: () => [],
         pickFolder: noFolders,
         listFolder: noFolders,
         readFolderFile: noFolders,
